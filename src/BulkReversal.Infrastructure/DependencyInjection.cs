@@ -20,6 +20,18 @@ public static class DependencyInjection
     {
         services.AddDbContext<BulkReversalDbContext>(options =>
         {
+            // "Database:Provider" defaults to SQL Server (the only supported provider in a real
+            // deployment); "InMemory" exists solely so the app and its request pipeline can run
+            // without a live SQL Server for local exploration/smoke-testing — never set it in a
+            // deployed environment (no migrations, no durability, no concurrency guarantees).
+            var provider = configuration.GetValue("Database:Provider", "SqlServer");
+
+            if (string.Equals(provider, "InMemory", StringComparison.OrdinalIgnoreCase))
+            {
+                options.UseInMemoryDatabase("BulkReversalDb");
+                return;
+            }
+
             var connectionString = configuration.GetConnectionString("BulkReversalConnection");
             if (string.IsNullOrWhiteSpace(connectionString))
             {

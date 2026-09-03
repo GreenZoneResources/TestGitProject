@@ -31,22 +31,14 @@ public class ConfigureSwaggerOptions : IConfigureOptions<SwaggerGenOptions>
             docs[description.GroupName] = new OpenApiInfo
             {
                 Title = "BulkReversal.API — Settlement Portal",
-                Version = description.ApiVersion.ToString(),
-                Description =
-                    "Failed Transaction Reversal Portal API: batch upload, validation, approvals, " +
-                    "and status monitoring for the Settlement Team." +
-                    (description.IsDeprecated ? " This API version has been deprecated." : string.Empty)
+                Version = description.ApiVersion.ToString()
             };
         }
 
         docs["provider"] = new OpenApiInfo
         {
             Title = "BulkReversal.API — Reversal Engine Provider Contract",
-            Version = "provider",
-            Description =
-                "The two endpoints SingleReversalEngine.Orchestrator calls against this application " +
-                "as a \"provider\": GET pending reversals and POST the outcome callback. Secured with " +
-                "an API key (X-API-Key), independent of the Settlement-portal SSO login."
+            Version = "provider"
         };
 
         options.DocInclusionPredicate((docName, apiDesc) => apiDesc.GroupName == docName);

@@ -53,6 +53,7 @@ Everything is environment-configurable via `appsettings.json` / `appsettings.{En
 | `RateLimiting:Provider` | Fixed-window rate limit applied to the provider endpoints |
 | `ForwardedHeaders` | Reverse-proxy header trust (scheme/host correctness post-deployment) |
 | `Swagger:Enabled` | Toggle Swagger UI/JSON (on by default, including in deployed environments) |
+| `Database:Provider` | `SqlServer` (default, the only supported provider in a deployed environment) or `InMemory` — a local/dev-only escape hatch to run the app and exercise its endpoints without a live SQL Server. Never set to `InMemory` outside local exploration: no migrations, no durability, no concurrency safety. |
 
 ## Running locally
 
@@ -64,6 +65,24 @@ dotnet run --project src/BulkReversal.API
 
 Swagger UI: `https://localhost:<port>/swagger` — two documents are published, **v1** (Settlement
 portal) and **provider** (the two engine-facing endpoints), each with its own security scheme.
+Per-endpoint description text is intentionally omitted (XML doc comments are not fed into Swagger)
+for a leaner UI — only routes, parameters, and schemas are shown.
+
+### Upload results screen (edit/delete/retry before submission)
+
+A batch stays in the **Validated** status — editable — after `POST /api/v1/upload` until Settlement
+explicitly calls `POST /api/v1/upload/{batchReference}/submit`. While Validated:
+
+- `GET /api/v1/upload/{batchReference}/records` — list staged rows for the review table.
+- `PUT /api/v1/upload/{batchReference}/records/{transactionId}` — correct a row in place (partial
+  update — only supplied fields change) and revalidate it (field rules + BRU-04/BRU-06 duplicate checks).
+- `DELETE /api/v1/upload/{batchReference}/records/{transactionId}` — remove a row.
+- `POST /api/v1/upload/{batchReference}/records/{transactionId}/retry` — revalidate a row's current
+  values without changing them.
+
+All four return the refreshed batch summary (counts + remaining invalid rows). Once the batch is
+submitted (or later approved/rejected), every one of these returns `400` — rows can't shift under
+a reviewer once submitted for approval.
 
 `appsettings.Development.json` ships with `Sso:UseDatabaseTokenSettings: false` and a fixed dev
 signing key/API key so the app runs without a live SSO database — **never** set that to `false`

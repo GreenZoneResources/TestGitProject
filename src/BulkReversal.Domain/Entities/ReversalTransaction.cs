@@ -104,6 +104,44 @@ public class ReversalTransaction : AuditableEntity
         ValidationErrors = string.Join("; ", reasons);
     }
 
+    /// <summary>
+    /// In-place correction of a staged row (Settlement fixing a Failed record before submission).
+    /// Refuses once the row has entered the reversal pipeline (<see cref="Status"/> assigned) —
+    /// the owning <see cref="ReversalBatch.EnsureMutable"/> gate is the primary guard, this is
+    /// defense-in-depth at the row level. Callers must re-run validation and call
+    /// <see cref="MarkValid"/>/<see cref="MarkInvalid"/> themselves afterward.
+    /// </summary>
+    public void EditFields(
+        TransactionType transactionType,
+        string sessionIdOrFtReference,
+        string? rrn,
+        string accountNumber,
+        DateOnly transactionDate,
+        decimal transactionAmount,
+        string channel,
+        string? beneficiaryBank,
+        string? biller,
+        string reasonForFailure,
+        string? comments,
+        string updatedBy)
+    {
+        if (Status is not null)
+            throw new DomainException($"Row {RowNumber} ({SessionIdOrFtReference}) can no longer be edited; it has already been submitted for processing.");
+
+        TransactionType = transactionType;
+        SessionIdOrFtReference = sessionIdOrFtReference.Trim();
+        Rrn = string.IsNullOrWhiteSpace(rrn) ? null : rrn.Trim();
+        AccountNumber = accountNumber.Trim();
+        TransactionDate = transactionDate;
+        TransactionAmount = transactionAmount;
+        Channel = channel.Trim();
+        BeneficiaryBank = string.IsNullOrWhiteSpace(beneficiaryBank) ? null : beneficiaryBank.Trim();
+        Biller = string.IsNullOrWhiteSpace(biller) ? null : biller.Trim();
+        ReasonForFailure = reasonForFailure.Trim();
+        Comments = string.IsNullOrWhiteSpace(comments) ? null : comments.Trim();
+        Touch(updatedBy);
+    }
+
     /// <summary>Approved and staged; eligible for pickup by the reversal engine's polling endpoint.</summary>
     public void Submit()
     {

@@ -68,11 +68,47 @@ public class ReversalBatch : AuditableEntity
     /// <summary>Records the outcome of upload-time validation (FR-06/FR-07).</summary>
     public void CompleteValidation()
     {
+        RecalculateCounts();
+        Status = BatchStatus.Validated;
+    }
+
+    /// <summary>Refreshes Total/Valid/InvalidRecords from the current rows without changing Status —
+    /// used after an in-place edit, delete, or row-level revalidation.</summary>
+    public void RecalculateCounts()
+    {
         TotalRecords = _transactions.Count;
         ValidRecords = _transactions.Count(t => t.RowValidationStatus == RowValidationStatus.Valid);
         InvalidRecords = TotalRecords - ValidRecords;
-        Status = BatchStatus.Validated;
     }
+
+    /// <summary>Rows may only be edited, deleted, or individually revalidated while the batch is
+    /// staged and has not yet been submitted for approval — once submitted, the reviewed row set
+    /// must not shift under the approver.</summary>
+    public void EnsureMutable()
+    {
+        if (Status is not (BatchStatus.Uploaded or BatchStatus.Validated))
+            throw new DomainException(
+                $"Batch {BatchReference} can no longer be modified (status: {Status}). Only batches awaiting submission for review can be edited.");
+    }
+
+    /// <summary>Looks up a row for edit/delete, enforcing <see cref="EnsureMutable"/> first.</summary>
+    public ReversalTransaction GetMutableTransaction(Guid transactionId)
+    {
+        EnsureMutable();
+        return _transactions.FirstOrDefault(t => t.Id == transactionId)
+            ?? throw new DomainException($"Row {transactionId} was not found in batch {BatchReference}.");
+    }
+
+    public void RemoveTransaction(Guid transactionId)
+    {
+        var transaction = GetMutableTransaction(transactionId);
+        _transactions.Remove(transaction);
+        RecalculateCounts();
+    }
+
+    /// <summary>All other rows' references, for in-batch duplicate checks (BRU-06) when editing one row.</summary>
+    public IEnumerable<string> OtherReferences(Guid excludeTransactionId) =>
+        _transactions.Where(t => t.Id != excludeTransactionId).Select(t => t.SessionIdOrFtReference);
 
     public void SubmitForApproval(string userId, string userName)
     {

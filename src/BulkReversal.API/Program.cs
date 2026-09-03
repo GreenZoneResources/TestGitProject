@@ -102,23 +102,15 @@ try
             Type = SecuritySchemeType.Http,
             Scheme = "bearer",
             BearerFormat = "JWT",
-            In = ParameterLocation.Header,
-            Description = "Settlement-portal SSO JWT. Normally delivered via the 'access-token' cookie by the " +
-                          "Intranet gateway; paste a raw bearer token here to call the API directly from Swagger UI."
+            In = ParameterLocation.Header
         });
 
         options.AddSecurityDefinition(ProviderApiKeyOptions.SchemeName, new OpenApiSecurityScheme
         {
             Name = "X-API-Key",
             Type = SecuritySchemeType.ApiKey,
-            In = ParameterLocation.Header,
-            Description = "API key issued to SingleReversalEngine.Orchestrator for the provider-contract endpoints."
+            In = ParameterLocation.Header
         });
-
-        foreach (var xmlFile in Directory.GetFiles(AppContext.BaseDirectory, "BulkReversal.*.xml"))
-        {
-            options.IncludeXmlComments(xmlFile, includeControllerXmlComments: true);
-        }
     });
 
     // --- Application / Infrastructure wiring ---

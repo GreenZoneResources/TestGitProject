@@ -1,9 +1,10 @@
 using BulkReversal.Application.Common.Interfaces;
 using BulkReversal.Application.Common.Interfaces.Persistence;
+using BulkReversal.Application.Common.Options;
 using BulkReversal.Infrastructure.Auth;
 using BulkReversal.Infrastructure.Auth.ProviderApiKey;
 using BulkReversal.Infrastructure.Auth.Sso;
-using BulkReversal.Infrastructure.FileParsing;
+using BulkReversal.Infrastructure.ExternalServices;
 using BulkReversal.Infrastructure.Persistence;
 using BulkReversal.Infrastructure.Persistence.Repositories;
 using BulkReversal.Infrastructure.Reporting;
@@ -11,6 +12,7 @@ using BulkReversal.Infrastructure.Time;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace BulkReversal.Infrastructure;
 
@@ -51,11 +53,22 @@ public static class DependencyInjection
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IBatchReferenceGenerator, BatchReferenceGenerator>();
 
-        services.AddScoped<IUploadFileParser, CsvUploadFileParser>();
-        services.AddScoped<IUploadFileParser, ExcelUploadFileParser>();
         services.AddScoped<IReportExportService, ReportExportService>();
 
         services.AddSingleton<IDateTimeProvider, SystemDateTimeProvider>();
+
+        // BRU-05: independent confirmation that a submitted reference matches a genuine source
+        // transaction. Disabled by default (see TransferServiceOptions); the typed HttpClient never
+        // has its BaseAddress set because TransferServiceClient builds the full absolute URL itself
+        // (BaseUrl + path), matching the Transfer Service's own convention.
+        services.AddOptions<TransferServiceOptions>()
+            .Bind(configuration.GetSection(TransferServiceOptions.SectionName))
+            .ValidateOnStart();
+        services.AddHttpClient<ITransferService, TransferServiceClient>((sp, client) =>
+        {
+            var options = sp.GetRequiredService<IOptions<TransferServiceOptions>>().Value;
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(options.TimeoutSeconds, 1, 60));
+        });
 
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUserService, CurrentUserService>();

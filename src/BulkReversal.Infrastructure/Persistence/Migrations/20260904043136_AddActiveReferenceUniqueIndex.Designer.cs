@@ -4,6 +4,7 @@ using BulkReversal.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace BulkReversal.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(BulkReversalDbContext))]
-    partial class BulkReversalDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260904043136_AddActiveReferenceUniqueIndex")]
+    partial class AddActiveReferenceUniqueIndex
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

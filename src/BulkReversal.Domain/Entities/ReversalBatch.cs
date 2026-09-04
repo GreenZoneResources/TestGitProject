@@ -5,20 +5,18 @@ using BulkReversal.Domain.Exceptions;
 namespace BulkReversal.Domain.Entities;
 
 /// <summary>
-/// A staged batch of failed-transaction reversal requests uploaded by the Settlement Team
-/// (BRD 3.2-3.4). Owns the set of <see cref="ReversalTransaction"/> rows parsed from the file.
+/// A staged batch of failed-transaction reversal requests submitted by the Settlement Team
+/// (BRD 3.2-3.4). Owns the set of <see cref="ReversalTransaction"/> rows submitted with it.
 /// </summary>
 public class ReversalBatch : AuditableEntity
 {
     private readonly List<ReversalTransaction> _transactions = new();
 
-    /// <summary>Human-friendly name supplied by the uploader.</summary>
+    /// <summary>Human-friendly name supplied by the submitter.</summary>
     public string BatchName { get; private set; } = string.Empty;
 
     /// <summary>System-generated unique tracking reference, e.g. BR-20260805-01 (FR-09).</summary>
     public string BatchReference { get; private set; } = string.Empty;
-
-    public string OriginalFileName { get; private set; } = string.Empty;
 
     public string UploadedByUserId { get; private set; } = string.Empty;
     public string UploadedByName { get; private set; } = string.Empty;
@@ -43,7 +41,7 @@ public class ReversalBatch : AuditableEntity
 
     private ReversalBatch() { }
 
-    public static ReversalBatch Create(string batchName, string originalFileName, string uploadedByUserId, string uploadedByName, string batchReference)
+    public static ReversalBatch Create(string batchName, string uploadedByUserId, string uploadedByName, string batchReference)
     {
         if (string.IsNullOrWhiteSpace(batchName))
             throw new DomainException("Batch name is required.");
@@ -53,7 +51,6 @@ public class ReversalBatch : AuditableEntity
         return new ReversalBatch
         {
             BatchName = batchName.Trim(),
-            OriginalFileName = originalFileName,
             UploadedByUserId = uploadedByUserId,
             UploadedByName = uploadedByName,
             BatchReference = batchReference,

@@ -1,4 +1,3 @@
-using System.Globalization;
 using BulkReversal.Application.Common.Exceptions;
 using BulkReversal.Application.Common.Interfaces;
 using BulkReversal.Application.Common.Interfaces.Persistence;
@@ -13,14 +12,12 @@ using Microsoft.Extensions.Options;
 namespace BulkReversal.Application.Features.Upload.Services;
 
 /// <summary>
-/// Orchestrates FR-03 through FR-09: parses the uploaded template, runs field-level and
-/// cross-row/cross-system validation (Section 5 business rules), stages the batch, assigns its
-/// Batch Reference Number, and lets Settlement correct individual rows (edit/delete/retry) before
-/// explicitly submitting the batch for approval.
+/// Orchestrates FR-03 through FR-09: validates the submitted batch (field-level, cross-row, and
+/// cross-system rules from Section 5), stages it, assigns its Batch Reference Number, and lets
+/// Settlement correct individual rows (edit/delete/retry) before explicitly submitting for approval.
 /// </summary>
 public class BatchUploadService : IBatchUploadService
 {
-    private readonly IEnumerable<IUploadFileParser> _parsers;
     private readonly UploadRowFieldValidator _fieldValidator;
     private readonly IReversalBatchRepository _batchRepository;
     private readonly IReversalTransactionRepository _transactionRepository;
@@ -28,11 +25,12 @@ public class BatchUploadService : IBatchUploadService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICurrentUserService _currentUser;
     private readonly IAuditService _auditService;
+    private readonly ITransferService _transferService;
     private readonly BusinessRulesOptions _rules;
+    private readonly TransferServiceOptions _transferOptions;
     private readonly ILogger<BatchUploadService> _logger;
 
     public BatchUploadService(
-        IEnumerable<IUploadFileParser> parsers,
         UploadRowFieldValidator fieldValidator,
         IReversalBatchRepository batchRepository,
         IReversalTransactionRepository transactionRepository,
@@ -40,10 +38,11 @@ public class BatchUploadService : IBatchUploadService
         IUnitOfWork unitOfWork,
         ICurrentUserService currentUser,
         IAuditService auditService,
+        ITransferService transferService,
         IOptions<BusinessRulesOptions> rules,
+        IOptions<TransferServiceOptions> transferOptions,
         ILogger<BatchUploadService> logger)
     {
-        _parsers = parsers;
         _fieldValidator = fieldValidator;
         _batchRepository = batchRepository;
         _transactionRepository = transactionRepository;
@@ -51,84 +50,76 @@ public class BatchUploadService : IBatchUploadService
         _unitOfWork = unitOfWork;
         _currentUser = currentUser;
         _auditService = auditService;
+        _transferService = transferService;
         _rules = rules.Value;
+        _transferOptions = transferOptions.Value;
         _logger = logger;
     }
 
-    public async Task<UploadBatchResultDto> UploadAsync(UploadBatchCommand command, CancellationToken ct = default)
+    public async Task<UploadBatchResultDto> CreateBatchAsync(CreateReversalBatchRequest request, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(command.BatchName))
-            throw new ValidationAppException(nameof(command.BatchName), "Batch name is required.");
+        if (string.IsNullOrWhiteSpace(request.BatchName))
+            throw new ValidationAppException(nameof(request.BatchName), "Batch name is required.");
 
-        if (command.FileSizeBytes <= 0)
-            throw new ValidationAppException(nameof(command.FileName), "The uploaded file is empty.");
+        if (request.Transactions.Count == 0)
+            throw new ValidationAppException(nameof(request.Transactions), "At least one transaction is required.");
 
-        if (command.FileSizeBytes > _rules.MaxFileSizeBytes)
-            throw new ValidationAppException(nameof(command.FileName), $"File exceeds the maximum allowed size of {_rules.MaxFileSizeBytes / (1024 * 1024)} MB.");
-
-        var extension = Path.GetExtension(command.FileName);
-        if (!_rules.AllowedFileExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase))
-            throw new ValidationAppException(nameof(command.FileName), $"Unsupported file type '{extension}'. Only {string.Join(", ", _rules.AllowedFileExtensions)} are accepted."); // BRU-02
-
-        var parser = _parsers.FirstOrDefault(p => p.CanParse(command.FileName))
-            ?? throw new ValidationAppException(nameof(command.FileName), $"No parser is registered for file type '{extension}'.");
-
-        var rawRows = await parser.ParseAsync(command.FileStream, command.FileName, ct);
-
-        if (rawRows.Count == 0)
-            throw new ValidationAppException(nameof(command.FileName), "The uploaded file contains no data rows.");
-
-        if (rawRows.Count > _rules.MaxRecordsPerFile) // BRU-01
-            throw new ValidationAppException(nameof(command.FileName), $"File contains {rawRows.Count} records, exceeding the maximum of {_rules.MaxRecordsPerFile} records per file.");
+        if (request.Transactions.Count > _rules.MaxRecordsPerFile) // BRU-01
+            throw new ValidationAppException(nameof(request.Transactions), $"{request.Transactions.Count} records were submitted, exceeding the maximum of {_rules.MaxRecordsPerFile} records per batch.");
 
         var batchReference = await _referenceGenerator.NextAsync(ct);
-        var batch = ReversalBatch.Create(command.BatchName, command.FileName, _currentUser.UserId, _currentUser.UserName, batchReference);
+        var batch = ReversalBatch.Create(request.BatchName, _currentUser.UserId, _currentUser.UserName, batchReference);
 
-        var parsedRows = rawRows.Select(r => (Raw: r, Parsed: _fieldValidator.Validate(r))).ToList();
-
-        // BRU-06: duplicate references within the same file.
-        var duplicateRefsInFile = parsedRows
-            .Where(x => !string.IsNullOrWhiteSpace(x.Parsed.SessionIdOrFtReference))
-            .GroupBy(x => x.Parsed.SessionIdOrFtReference, StringComparer.OrdinalIgnoreCase)
+        // BRU-06: duplicate references within the same submission.
+        var duplicateRefsInBatch = request.Transactions
+            .Where(t => !string.IsNullOrWhiteSpace(t.SessionIdOrFtReference))
+            .GroupBy(t => t.SessionIdOrFtReference, StringComparer.OrdinalIgnoreCase)
             .Where(g => g.Count() > 1)
             .Select(g => g.Key)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        // BRU-04: references already reversed anywhere in the system.
-        var candidateRefs = parsedRows
-            .Where(x => !string.IsNullOrWhiteSpace(x.Parsed.SessionIdOrFtReference))
-            .Select(x => x.Parsed.SessionIdOrFtReference)
+        // BRU-04: references with an active reversal elsewhere in the system — already reversed,
+        // already released to the engine, or still a live valid row staged in another batch.
+        var candidateRefs = request.Transactions
+            .Where(t => !string.IsNullOrWhiteSpace(t.SessionIdOrFtReference))
+            .Select(t => t.SessionIdOrFtReference)
             .Distinct(StringComparer.OrdinalIgnoreCase);
-        var alreadyReversedRefs = await _transactionRepository.GetAlreadyReversedReferencesAsync(candidateRefs, ct);
+        var conflictingRefs = await _transactionRepository.GetActiveConflictReferencesAsync(candidateRefs, ct: ct);
 
-        foreach (var (raw, parsed) in parsedRows)
+        // BRU-05: source-transaction confirmation, bounded-concurrency so a large batch doesn't
+        // open hundreds of simultaneous connections to the Transfer Service.
+        var sourceCheckErrors = await CheckSourceTransactionsAsync(request.Transactions, ct);
+
+        for (var i = 0; i < request.Transactions.Count; i++)
         {
-            var errors = new List<string>(parsed.Errors);
+            var row = request.Transactions[i];
+            var errors = _fieldValidator.Validate(row);
+            errors.AddRange(sourceCheckErrors[i]);
 
-            if (!string.IsNullOrWhiteSpace(parsed.SessionIdOrFtReference))
+            if (!string.IsNullOrWhiteSpace(row.SessionIdOrFtReference))
             {
-                if (duplicateRefsInFile.Contains(parsed.SessionIdOrFtReference))
-                    errors.Add($"Session ID / FT Reference '{parsed.SessionIdOrFtReference}' appears more than once in this file.");
+                if (duplicateRefsInBatch.Contains(row.SessionIdOrFtReference))
+                    errors.Add($"Session ID / FT Reference '{row.SessionIdOrFtReference}' appears more than once in this batch.");
 
-                if (alreadyReversedRefs.Contains(parsed.SessionIdOrFtReference))
-                    errors.Add($"Session ID / FT Reference '{parsed.SessionIdOrFtReference}' has already been reversed.");
+                if (conflictingRefs.Contains(row.SessionIdOrFtReference))
+                    errors.Add($"Session ID / FT Reference '{row.SessionIdOrFtReference}' is already reversed or already active in another batch.");
             }
 
             var transaction = ReversalTransaction.Create(
                 batch.Id,
                 batch.BatchReference,
-                raw.RowNumber,
-                parsed.TransactionType,
-                parsed.SessionIdOrFtReference,
-                parsed.Rrn,
-                parsed.AccountNumber,
-                parsed.TransactionDate,
-                parsed.TransactionAmount,
-                parsed.Channel,
-                parsed.BeneficiaryBank,
-                parsed.Biller,
-                parsed.ReasonForFailure,
-                parsed.Comments,
+                i + 1,
+                row.TransactionType,
+                row.SessionIdOrFtReference ?? string.Empty,
+                row.Rrn,
+                row.AccountNumber ?? string.Empty,
+                row.TransactionDate,
+                row.TransactionAmount,
+                row.Channel ?? string.Empty,
+                row.BeneficiaryBank,
+                row.Biller,
+                row.ReasonForFailure ?? string.Empty,
+                row.Comments,
                 _currentUser.UserId);
 
             if (errors.Count == 0)
@@ -147,7 +138,7 @@ public class BatchUploadService : IBatchUploadService
             nameof(ReversalBatch),
             batch.Id.ToString(),
             batch.BatchReference,
-            $"Uploaded '{command.FileName}' as batch {batch.BatchReference}: {batch.TotalRecords} records ({batch.ValidRecords} valid, {batch.InvalidRecords} invalid).");
+            $"Batch {batch.BatchReference} created with {batch.TotalRecords} records ({batch.ValidRecords} valid, {batch.InvalidRecords} invalid).");
 
         _auditService.Record(
             AuditAction.Validation,
@@ -159,7 +150,7 @@ public class BatchUploadService : IBatchUploadService
         await _unitOfWork.SaveChangesAsync(ct);
 
         _logger.LogInformation(
-            "Batch {BatchReference} uploaded by {UserId}: {Total} records, {Valid} valid, {Invalid} invalid.",
+            "Batch {BatchReference} created by {UserId}: {Total} records, {Valid} valid, {Invalid} invalid.",
             batch.BatchReference, _currentUser.UserId, batch.TotalRecords, batch.ValidRecords, batch.InvalidRecords);
 
         return MapToResultDto(batch);
@@ -187,12 +178,12 @@ public class BatchUploadService : IBatchUploadService
         var batch = await GetBatchOrThrowAsync(batchReference, ct);
         var transaction = batch.GetMutableTransaction(transactionId); // throws DomainException if batch/row isn't editable
 
-        var (parsed, errors) = await ValidateAsync(BuildRawRow(transaction, request), batch, transactionId, ct);
+        var (merged, errors) = await ValidateAsync(transaction, request, batch, transactionId, ct);
 
         transaction.EditFields(
-            parsed.TransactionType, parsed.SessionIdOrFtReference, parsed.Rrn, parsed.AccountNumber,
-            parsed.TransactionDate, parsed.TransactionAmount, parsed.Channel, parsed.BeneficiaryBank,
-            parsed.Biller, parsed.ReasonForFailure, parsed.Comments, _currentUser.UserId);
+            merged.TransactionType, merged.SessionIdOrFtReference, merged.Rrn, merged.AccountNumber,
+            merged.TransactionDate, merged.TransactionAmount, merged.Channel, merged.BeneficiaryBank,
+            merged.Biller, merged.ReasonForFailure, merged.Comments, _currentUser.UserId);
 
         if (errors.Count == 0)
             transaction.MarkValid();
@@ -243,7 +234,7 @@ public class BatchUploadService : IBatchUploadService
         var batch = await GetBatchOrThrowAsync(batchReference, ct);
         var transaction = batch.GetMutableTransaction(transactionId);
 
-        var (_, errors) = await ValidateAsync(BuildRawRow(transaction, edit: null), batch, transactionId, ct);
+        var (_, errors) = await ValidateAsync(transaction, edit: null, batch, transactionId, ct);
 
         if (errors.Count == 0)
             transaction.MarkValid();
@@ -290,38 +281,101 @@ public class BatchUploadService : IBatchUploadService
         await _batchRepository.GetByReferenceAsync(batchReference, includeTransactions: true, ct)
             ?? throw new NotFoundAppException(nameof(ReversalBatch), batchReference);
 
-    /// <summary>Re-runs field-level validation plus the same cross-row (BRU-06) and cross-system
-    /// (BRU-04) checks applied at upload time, scoped to a single row.</summary>
-    private async Task<(ParsedRow Parsed, List<string> Errors)> ValidateAsync(
-        RawUploadRow raw, ReversalBatch batch, Guid transactionId, CancellationToken ct)
+    /// <summary>Re-runs field-level validation plus the same cross-row (BRU-06), cross-system
+    /// (BRU-04), and source-transaction (BRU-05) checks applied at batch creation, scoped to one row.</summary>
+    private async Task<(TransactionRevalidationRequest Merged, List<string> Errors)> ValidateAsync(
+        ReversalTransaction current, EditTransactionRowRequest? edit, ReversalBatch batch, Guid transactionId, CancellationToken ct)
     {
-        var parsed = _fieldValidator.Validate(raw);
-        var errors = new List<string>(parsed.Errors);
+        var merged = BuildMergedRequest(current, edit);
+        var errors = _fieldValidator.Validate(merged);
 
-        if (!string.IsNullOrWhiteSpace(parsed.SessionIdOrFtReference))
+        if (!string.IsNullOrWhiteSpace(merged.SessionIdOrFtReference))
         {
             var otherRefs = batch.OtherReferences(transactionId);
-            if (otherRefs.Contains(parsed.SessionIdOrFtReference, StringComparer.OrdinalIgnoreCase))
-                errors.Add($"Session ID / FT Reference '{parsed.SessionIdOrFtReference}' appears more than once in this batch.");
+            if (otherRefs.Contains(merged.SessionIdOrFtReference, StringComparer.OrdinalIgnoreCase))
+                errors.Add($"Session ID / FT Reference '{merged.SessionIdOrFtReference}' appears more than once in this batch.");
 
-            if (await _transactionRepository.IsAlreadyReversedAsync(parsed.SessionIdOrFtReference, ct))
-                errors.Add($"Session ID / FT Reference '{parsed.SessionIdOrFtReference}' has already been reversed.");
+            if (await _transactionRepository.HasActiveConflictAsync(merged.SessionIdOrFtReference, transactionId, ct))
+                errors.Add($"Session ID / FT Reference '{merged.SessionIdOrFtReference}' is already reversed or already active in another batch.");
+
+            errors.AddRange(await CheckSourceTransactionAsync(merged.SessionIdOrFtReference, merged.AccountNumber, merged.TransactionAmount, ct));
         }
 
-        return (parsed, errors);
+        return (merged, errors);
     }
 
-    /// <summary>Merges an optional partial edit onto a row's current values, producing the same raw
-    /// string shape the upload-time parser/validator works with, so both paths share one validator.</summary>
-    private static RawUploadRow BuildRawRow(ReversalTransaction current, EditTransactionRowRequest? edit) => new()
+    /// <summary>BRU-05 for a single reference. No-op (empty result) when the Transfer Service
+    /// integration is disabled, or the reference is blank (field validation already flags that).</summary>
+    private async Task<List<string>> CheckSourceTransactionAsync(string? reference, string? accountNumber, decimal amount, CancellationToken ct)
     {
-        RowNumber = current.RowNumber,
-        TransactionType = (edit?.TransactionType ?? current.TransactionType).ToString(),
+        var errors = new List<string>();
+        if (!_transferOptions.Enabled || string.IsNullOrWhiteSpace(reference))
+        {
+            return errors;
+        }
+
+        var result = await _transferService.GetTransactionByReferenceAsync(reference, ct);
+
+        switch (result.Status)
+        {
+            case TransferReferenceLookupStatus.NotFound:
+                errors.Add($"Session ID / FT Reference '{reference}' does not match any source transaction record.");
+                break;
+
+            case TransferReferenceLookupStatus.Unavailable:
+                errors.Add($"Unable to verify Session ID / FT Reference '{reference}' against source transaction records ({result.ErrorMessage}). Use Retry once the Transfer Service is reachable.");
+                break;
+
+            case TransferReferenceLookupStatus.Found:
+                if (!string.IsNullOrWhiteSpace(result.AccountNumber) && !string.Equals(result.AccountNumber, accountNumber, StringComparison.Ordinal))
+                    errors.Add($"Account Number '{accountNumber}' does not match the source transaction record for '{reference}'.");
+                if (result.Amount.HasValue && result.Amount.Value != amount)
+                    errors.Add($"Transaction Amount does not match the source transaction record for '{reference}'.");
+                break;
+        }
+
+        return errors;
+    }
+
+    /// <summary>BRU-05 for a whole batch, bounded to <see cref="TransferServiceOptions.MaxConcurrentRequests"/>
+    /// concurrent lookups. Returns one error list per row, aligned by index.</summary>
+    private async Task<List<string>[]> CheckSourceTransactionsAsync(IReadOnlyList<TransactionRevalidationRequest> rows, CancellationToken ct)
+    {
+        var results = new List<string>[rows.Count];
+
+        if (!_transferOptions.Enabled)
+        {
+            Array.Fill(results, []);
+            return results;
+        }
+
+        using var semaphore = new SemaphoreSlim(Math.Max(1, _transferOptions.MaxConcurrentRequests));
+
+        var tasks = rows.Select(async (row, index) =>
+        {
+            await semaphore.WaitAsync(ct);
+            try
+            {
+                results[index] = await CheckSourceTransactionAsync(row.SessionIdOrFtReference, row.AccountNumber, row.TransactionAmount, ct);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+        return results;
+    }
+
+    private static TransactionRevalidationRequest BuildMergedRequest(ReversalTransaction current, EditTransactionRowRequest? edit) => new()
+    {
+        TransactionType = edit?.TransactionType ?? current.TransactionType,
         SessionIdOrFtReference = edit?.SessionIdOrFtReference ?? current.SessionIdOrFtReference,
         Rrn = edit?.Rrn ?? current.Rrn,
         AccountNumber = edit?.AccountNumber ?? current.AccountNumber,
-        TransactionDate = (edit?.TransactionDate ?? current.TransactionDate).ToString("dd/MM/yyyy", CultureInfo.InvariantCulture),
-        TransactionAmount = (edit?.TransactionAmount ?? current.TransactionAmount).ToString(CultureInfo.InvariantCulture),
+        TransactionDate = edit?.TransactionDate ?? current.TransactionDate,
+        TransactionAmount = edit?.TransactionAmount ?? current.TransactionAmount,
         Channel = edit?.Channel ?? current.Channel,
         BeneficiaryBank = edit?.BeneficiaryBank ?? current.BeneficiaryBank,
         Biller = edit?.Biller ?? current.Biller,

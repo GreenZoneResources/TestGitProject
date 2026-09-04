@@ -9,8 +9,8 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace BulkReversal.API.Controllers.V1;
 
-/// <summary>Batch Upload screen (FR-03 to FR-09): upload, validate, and stage a Reversal Upload
-/// Template; review, edit, delete, and revalidate individual rows; then submit for approval.</summary>
+/// <summary>Batch Upload screen (FR-03 to FR-09): validate and stage a batch of reversal
+/// transactions; review, edit, delete, and revalidate individual rows; then submit for approval.</summary>
 [ApiController]
 [ApiVersion("1.0")]
 [Route("api/v{version:apiVersion}/upload")]
@@ -20,13 +20,18 @@ public class UploadController : ControllerBase
 {
     private readonly IBatchUploadService _uploadService;
     private readonly IReportExportService _exportService;
+    private readonly IValidator<CreateReversalBatchRequest> _createValidator;
     private readonly IValidator<EditTransactionRowRequest> _editValidator;
 
     public UploadController(
-        IBatchUploadService uploadService, IReportExportService exportService, IValidator<EditTransactionRowRequest> editValidator)
+        IBatchUploadService uploadService,
+        IReportExportService exportService,
+        IValidator<CreateReversalBatchRequest> createValidator,
+        IValidator<EditTransactionRowRequest> editValidator)
     {
         _uploadService = uploadService;
         _exportService = exportService;
+        _createValidator = createValidator;
         _editValidator = editValidator;
     }
 
@@ -40,22 +45,21 @@ public class UploadController : ControllerBase
         return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Reversal-Upload-Template.xlsx");
     }
 
-    /// <summary>FR-03/FR-06/FR-07: upload a batch file and validate every row. The batch stays
-    /// Validated (editable) until explicitly submitted via <see cref="Submit"/>.</summary>
+    /// <summary>FR-03/FR-06/FR-07: validate a batch of transactions submitted as structured JSON.
+    /// The batch stays Validated (editable) until explicitly submitted via <see cref="Submit"/>.</summary>
     [HttpPost]
-    [RequestSizeLimit(20_000_000)]
+    [RequestSizeLimit(5_000_000)]
     [ProducesResponseType(typeof(UploadBatchResultDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<UploadBatchResultDto>> Upload([FromForm] UploadFileRequest request, CancellationToken ct)
+    public async Task<ActionResult<UploadBatchResultDto>> Create([FromBody] CreateReversalBatchRequest request, CancellationToken ct)
     {
-        if (request.File is null || request.File.Length == 0)
+        var validation = await _createValidator.ValidateAsync(request, ct);
+        if (!validation.IsValid)
         {
-            return ValidationProblem("The uploaded file is required and must not be empty.");
+            return ValidationProblem(new ValidationProblemDetails(validation.ToDictionary()));
         }
 
-        await using var stream = request.File.OpenReadStream();
-        var command = new UploadBatchCommand(request.BatchName, stream, request.File.FileName, request.File.Length);
-        var result = await _uploadService.UploadAsync(command, ct);
+        var result = await _uploadService.CreateBatchAsync(request, ct);
 
         return CreatedAtAction(nameof(GetRecords), new { batchReference = result.BatchReference }, result);
     }
@@ -120,7 +124,7 @@ public class UploadController : ControllerBase
     }
 
     /// <summary>FR-08: error report for a batch's invalid rows, so Settlement can correct and
-    /// re-upload only the failed records without resubmitting the whole file.</summary>
+    /// resubmit only the failed records without resubmitting the whole batch.</summary>
     [HttpGet("{batchReference}/invalid-rows-report")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
@@ -131,16 +135,4 @@ public class UploadController : ControllerBase
         return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             $"{result.BatchReference}-invalid-rows.xlsx");
     }
-
-    private ActionResult ValidationProblem(string message) =>
-        ValidationProblem(new ValidationProblemDetails(new Dictionary<string, string[]> { ["file"] = [message] }));
-}
-
-/// <summary>Multipart form-data payload for FR-03. A single bound complex type (rather than
-/// separate [FromForm] scalar/file parameters) so Swashbuckle can generate a correct multipart
-/// schema for Swagger UI's "Try it out".</summary>
-public class UploadFileRequest
-{
-    public string BatchName { get; set; } = string.Empty;
-    public IFormFile File { get; set; } = null!;
 }

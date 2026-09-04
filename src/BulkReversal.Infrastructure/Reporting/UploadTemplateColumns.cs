@@ -1,7 +1,7 @@
-namespace BulkReversal.Infrastructure.FileParsing;
+namespace BulkReversal.Infrastructure.Reporting;
 
-/// <summary>Canonical Reversal Upload Template headers (BRD Section 6) plus tolerant matching so
-/// minor header variations (spacing, punctuation, case) from real-world files still parse.</summary>
+/// <summary>Canonical Reversal Upload Template headers (BRD Section 6), used to build the
+/// downloadable reference template (FR-05) and the FR-08 invalid-rows/FR-17 status reports.</summary>
 internal static class UploadTemplateColumns
 {
     public const string SerialNumber = "S/N";
@@ -22,9 +22,4 @@ internal static class UploadTemplateColumns
         SerialNumber, TransactionType, SessionIdOrFtReference, Rrn, AccountNumber, TransactionDate,
         TransactionAmount, Channel, BeneficiaryBank, Biller, ReasonForFailure, Comments
     ];
-
-    /// <summary>Case/whitespace/punctuation-insensitive match, e.g. "SessionID/FTReference" ==
-    /// "Session ID / FT Reference".</summary>
-    public static string Normalize(string header) =>
-        new string(header.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
 }

@@ -14,18 +14,30 @@ public class ReversalTransactionRepository : IReversalTransactionRepository
     public Task<ReversalTransaction?> GetByIdAsync(Guid id, CancellationToken ct = default) =>
         _db.ReversalTransactions.FirstOrDefaultAsync(t => t.Id == id, ct);
 
-    public Task<bool> IsAlreadyReversedAsync(string sessionIdOrFtReference, CancellationToken ct = default) =>
-        _db.ReversalTransactions.AnyAsync(
-            t => t.SessionIdOrFtReference == sessionIdOrFtReference && t.Status == ReversalStatus.Reversed, ct);
+    // A row in Reversed/Submitted/Processing, or still a live (valid, undecided) row staged in
+    // another batch, blocks a new reversal for the same reference (BRU-04). Rejected is deliberately
+    // excluded — Settlement may legitimately resubmit after a rejection. Inlined into both queries
+    // below (rather than a shared predicate) because EF Core's LINQ translator needs the condition
+    // written directly in the query expression to turn it into SQL.
+    public Task<bool> HasActiveConflictAsync(string sessionIdOrFtReference, Guid? excludeTransactionId, CancellationToken ct = default) =>
+        _db.ReversalTransactions.AnyAsync(t =>
+            t.SessionIdOrFtReference == sessionIdOrFtReference
+            && (excludeTransactionId == null || t.Id != excludeTransactionId.Value)
+            && (t.Status == ReversalStatus.Reversed || t.Status == ReversalStatus.Submitted || t.Status == ReversalStatus.Processing
+                || (t.Status == null && t.RowValidationStatus == RowValidationStatus.Valid)),
+            ct);
 
-    public async Task<HashSet<string>> GetAlreadyReversedReferencesAsync(IEnumerable<string> sessionIdOrFtReferences, CancellationToken ct = default)
+    public async Task<HashSet<string>> GetActiveConflictReferencesAsync(IEnumerable<string> sessionIdOrFtReferences, Guid? excludeBatchId = null, CancellationToken ct = default)
     {
         var candidates = sessionIdOrFtReferences.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (candidates.Count == 0) return [];
 
         var matches = await _db.ReversalTransactions
             .AsNoTracking()
-            .Where(t => t.Status == ReversalStatus.Reversed && candidates.Contains(t.SessionIdOrFtReference))
+            .Where(t => candidates.Contains(t.SessionIdOrFtReference)
+                && (excludeBatchId == null || t.BatchId != excludeBatchId.Value)
+                && (t.Status == ReversalStatus.Reversed || t.Status == ReversalStatus.Submitted || t.Status == ReversalStatus.Processing
+                    || (t.Status == null && t.RowValidationStatus == RowValidationStatus.Valid)))
             .Select(t => t.SessionIdOrFtReference)
             .ToListAsync(ct);
 

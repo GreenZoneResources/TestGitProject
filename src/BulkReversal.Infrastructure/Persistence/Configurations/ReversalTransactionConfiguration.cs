@@ -33,13 +33,22 @@ public class ReversalTransactionConfiguration : IEntityTypeConfiguration<Reversa
         builder.Property(t => t.RowValidationStatus).HasConversion<string>().HasMaxLength(20);
         builder.Property(t => t.Status).HasConversion<string>().HasMaxLength(20);
 
-        // BRU-04: an already-reversed ftReference must never be reversed again. Enforced defensively
-        // at the application layer (bulk pre-check) and here as the last line of defense against a
-        // race between two concurrent uploads/approvals.
         builder.HasIndex(t => t.SessionIdOrFtReference);
         builder.HasIndex(t => t.BatchId);
         builder.HasIndex(t => t.Status);
         builder.HasIndex(t => t.BatchReference);
         builder.HasIndex(t => new { t.RowValidationStatus, t.Status });
+
+        // BRU-04: a reference must never have more than one "active" row system-wide — active
+        // meaning already released to the engine or reversed (Submitted/Processing/Reversed), or
+        // still a live valid row awaiting a decision (Status IS NULL AND RowValidationStatus =
+        // 'Valid'). Application-layer checks (BatchUploadService, ApprovalService) are the primary,
+        // UX-facing gate; this filtered unique index is the true last line of defense against a race
+        // between two concurrent creates/edits/approvals — SQL Server only, ignored by the InMemory
+        // provider used for local smoke-testing.
+        builder.HasIndex(t => t.SessionIdOrFtReference)
+            .HasDatabaseName("IX_ReversalTransactions_SessionIdOrFtReference_Active")
+            .IsUnique()
+            .HasFilter("[Status] IN (N'Submitted', N'Processing', N'Reversed') OR ([Status] IS NULL AND [RowValidationStatus] = N'Valid')");
     }
 }

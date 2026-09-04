@@ -13,6 +13,7 @@ namespace BulkReversal.Application.Features.Approvals;
 public class ApprovalService : IApprovalService
 {
     private readonly IReversalBatchRepository _batchRepository;
+    private readonly IReversalTransactionRepository _transactionRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICurrentUserService _currentUser;
     private readonly IAuditService _auditService;
@@ -20,12 +21,14 @@ public class ApprovalService : IApprovalService
 
     public ApprovalService(
         IReversalBatchRepository batchRepository,
+        IReversalTransactionRepository transactionRepository,
         IUnitOfWork unitOfWork,
         ICurrentUserService currentUser,
         IAuditService auditService,
         ILogger<ApprovalService> logger)
     {
         _batchRepository = batchRepository;
+        _transactionRepository = transactionRepository;
         _unitOfWork = unitOfWork;
         _currentUser = currentUser;
         _auditService = auditService;
@@ -70,6 +73,21 @@ public class ApprovalService : IApprovalService
     {
         var batch = await _batchRepository.GetByReferenceAsync(batchReference, includeTransactions: true, ct)
             ?? throw new NotFoundAppException(nameof(ReversalBatch), batchReference);
+
+        // BRU-04, re-checked immediately before release: a reference in this batch may have become
+        // active elsewhere (another batch approved, or independently reversed) in the time between
+        // this batch's own validation and now. Approving anyway would let the same source
+        // transaction be reversed twice.
+        var candidateRefs = batch.Transactions
+            .Where(t => t.RowValidationStatus == RowValidationStatus.Valid)
+            .Select(t => t.SessionIdOrFtReference);
+        var conflicts = await _transactionRepository.GetActiveConflictReferencesAsync(candidateRefs, excludeBatchId: batch.Id, ct: ct);
+        if (conflicts.Count > 0)
+        {
+            throw new ConflictAppException(
+                $"Batch {batch.BatchReference} cannot be approved: reference(s) {string.Join(", ", conflicts)} " +
+                "are already reversed or active in another batch. Remove or correct the affected row(s) and resubmit.");
+        }
 
         batch.Approve(_currentUser.UserId, _currentUser.UserName);
 

@@ -15,7 +15,6 @@ public class ReversalBatchConfiguration : IEntityTypeConfiguration<ReversalBatch
         builder.Property(b => b.BatchReference).HasMaxLength(50).IsRequired();
         builder.HasIndex(b => b.BatchReference).IsUnique();
 
-        builder.Property(b => b.OriginalFileName).HasMaxLength(260).IsRequired();
         builder.Property(b => b.UploadedByUserId).HasMaxLength(100).IsRequired();
         builder.Property(b => b.UploadedByName).HasMaxLength(200).IsRequired();
         builder.Property(b => b.SubmittedByUserId).HasMaxLength(100);

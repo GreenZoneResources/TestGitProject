@@ -4,6 +4,7 @@ using BulkReversal.Application.Common.Options;
 using BulkReversal.Infrastructure.Auth;
 using BulkReversal.Infrastructure.Auth.ProviderApiKey;
 using BulkReversal.Infrastructure.Auth.Sso;
+using BulkReversal.Infrastructure.Email;
 using BulkReversal.Infrastructure.ExternalServices;
 using BulkReversal.Infrastructure.Persistence;
 using BulkReversal.Infrastructure.Persistence.Repositories;
@@ -50,10 +51,12 @@ public static class DependencyInjection
         services.AddScoped<IReversalBatchRepository, ReversalBatchRepository>();
         services.AddScoped<IReversalTransactionRepository, ReversalTransactionRepository>();
         services.AddScoped<IAuditLogRepository, AuditLogRepository>();
+        services.AddScoped<IUserRoleAssignmentRepository, UserRoleAssignmentRepository>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IBatchReferenceGenerator, BatchReferenceGenerator>();
 
         services.AddScoped<IReportExportService, ReportExportService>();
+        services.AddScoped<IEmailService, SmtpEmailService>();
 
         services.AddSingleton<IDateTimeProvider, SystemDateTimeProvider>();
 

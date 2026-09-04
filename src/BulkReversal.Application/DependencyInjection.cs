@@ -3,6 +3,7 @@ using BulkReversal.Application.Common.Options;
 using BulkReversal.Application.Features.Approvals;
 using BulkReversal.Application.Features.Audit;
 using BulkReversal.Application.Features.Provider;
+using BulkReversal.Application.Features.RoleManagement;
 using BulkReversal.Application.Features.StatusMonitoring;
 using BulkReversal.Application.Features.Upload.Services;
 using FluentValidation;
@@ -25,6 +26,10 @@ public static class DependencyInjection
             .ValidateDataAnnotations()
             .ValidateOnStart();
 
+        services.AddOptions<EmailOptions>()
+            .Bind(configuration.GetSection(EmailOptions.SectionName))
+            .ValidateOnStart();
+
         services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
 
         services.AddScoped<UploadRowFieldValidator>();
@@ -33,6 +38,7 @@ public static class DependencyInjection
         services.AddScoped<IStatusMonitoringService, StatusMonitoringService>();
         services.AddScoped<IProviderIntegrationService, ProviderIntegrationService>();
         services.AddScoped<IAuditService, AuditService>();
+        services.AddScoped<IRoleAssignmentService, RoleAssignmentService>();
 
         return services;
     }

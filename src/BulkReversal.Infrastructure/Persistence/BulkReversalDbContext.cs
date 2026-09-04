@@ -10,6 +10,7 @@ public class BulkReversalDbContext : DbContext
     public DbSet<ReversalBatch> ReversalBatches => Set<ReversalBatch>();
     public DbSet<ReversalTransaction> ReversalTransactions => Set<ReversalTransaction>();
     public DbSet<AuditLogEntry> AuditLogEntries => Set<AuditLogEntry>();
+    public DbSet<UserRoleAssignment> UserRoleAssignments => Set<UserRoleAssignment>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

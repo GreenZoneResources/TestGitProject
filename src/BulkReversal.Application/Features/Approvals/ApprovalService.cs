@@ -1,12 +1,15 @@
+using System.Net;
 using BulkReversal.Application.Common.Exceptions;
 using BulkReversal.Application.Common.Interfaces;
 using BulkReversal.Application.Common.Interfaces.Persistence;
 using BulkReversal.Application.Common.Models;
+using BulkReversal.Application.Common.Options;
 using BulkReversal.Application.Features.Approvals.Dtos;
 using BulkReversal.Application.Features.Audit;
 using BulkReversal.Domain.Entities;
 using BulkReversal.Domain.Enums;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace BulkReversal.Application.Features.Approvals;
 
@@ -17,6 +20,9 @@ public class ApprovalService : IApprovalService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICurrentUserService _currentUser;
     private readonly IAuditService _auditService;
+    private readonly IUserRoleAssignmentRepository _roleAssignmentRepository;
+    private readonly IEmailService _emailService;
+    private readonly EmailOptions _emailOptions;
     private readonly ILogger<ApprovalService> _logger;
 
     public ApprovalService(
@@ -25,6 +31,9 @@ public class ApprovalService : IApprovalService
         IUnitOfWork unitOfWork,
         ICurrentUserService currentUser,
         IAuditService auditService,
+        IUserRoleAssignmentRepository roleAssignmentRepository,
+        IEmailService emailService,
+        IOptions<EmailOptions> emailOptions,
         ILogger<ApprovalService> logger)
     {
         _batchRepository = batchRepository;
@@ -32,6 +41,9 @@ public class ApprovalService : IApprovalService
         _unitOfWork = unitOfWork;
         _currentUser = currentUser;
         _auditService = auditService;
+        _roleAssignmentRepository = roleAssignmentRepository;
+        _emailService = emailService;
+        _emailOptions = emailOptions.Value;
         _logger = logger;
     }
 
@@ -96,6 +108,8 @@ public class ApprovalService : IApprovalService
 
         await _unitOfWork.SaveChangesAsync(ct);
         _logger.LogInformation("Batch {BatchReference} approved by {UserId}.", batch.BatchReference, _currentUser.UserId);
+
+        await NotifyInitiatorOfDecisionAsync(batch, approved: true, reason: null, ct);
     }
 
     public async Task RejectAsync(string batchReference, string reason, CancellationToken ct = default)
@@ -113,5 +127,34 @@ public class ApprovalService : IApprovalService
 
         await _unitOfWork.SaveChangesAsync(ct);
         _logger.LogInformation("Batch {BatchReference} rejected by {UserId}.", batch.BatchReference, _currentUser.UserId);
+
+        await NotifyInitiatorOfDecisionAsync(batch, approved: false, reason, ct);
     }
+
+    /// <summary>Notifies whoever submitted the batch for approval — best-effort, so a delivery
+    /// failure here must never undo the decision that already succeeded above.</summary>
+    private async Task NotifyInitiatorOfDecisionAsync(ReversalBatch batch, bool approved, string? reason, CancellationToken ct)
+    {
+        var initiatorUserId = batch.SubmittedByUserId ?? batch.UploadedByUserId;
+        var initiatorEmail = await _roleAssignmentRepository.GetActiveEmailForUserAsync(initiatorUserId, ct);
+        if (string.IsNullOrWhiteSpace(initiatorEmail))
+        {
+            _logger.LogWarning("No email on file for {UserId}; skipping decision notification for batch {BatchReference}.", initiatorUserId, batch.BatchReference);
+            return;
+        }
+
+        var link = string.IsNullOrWhiteSpace(_emailOptions.PortalBaseUrl)
+            ? null
+            : $"{_emailOptions.PortalBaseUrl!.TrimEnd('/')}/status-monitoring?batchReference={batch.BatchReference}";
+
+        var outcome = approved ? "approved" : "rejected";
+        var body =
+            $"<p>Batch <b>{Encode(batch.BatchReference)}</b> ('{Encode(batch.BatchName)}') was {outcome} by {Encode(_currentUser.UserName)}.</p>" +
+            (approved ? "" : $"<p>Reason: {Encode(reason ?? string.Empty)}</p>") +
+            (link is null ? "" : $"<p><a href=\"{link}\">Open in the Settlement Portal</a></p>");
+
+        await _emailService.SendAsync([initiatorEmail], $"Reversal batch {batch.BatchReference} {outcome}", body, ct);
+    }
+
+    private static string Encode(string value) => WebUtility.HtmlEncode(value);
 }

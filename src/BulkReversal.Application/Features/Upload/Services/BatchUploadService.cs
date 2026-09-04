@@ -1,3 +1,5 @@
+using System.Net;
+using BulkReversal.Application.Common.Constants;
 using BulkReversal.Application.Common.Exceptions;
 using BulkReversal.Application.Common.Interfaces;
 using BulkReversal.Application.Common.Interfaces.Persistence;
@@ -26,8 +28,11 @@ public class BatchUploadService : IBatchUploadService
     private readonly ICurrentUserService _currentUser;
     private readonly IAuditService _auditService;
     private readonly ITransferService _transferService;
+    private readonly IUserRoleAssignmentRepository _roleAssignmentRepository;
+    private readonly IEmailService _emailService;
     private readonly BusinessRulesOptions _rules;
     private readonly TransferServiceOptions _transferOptions;
+    private readonly EmailOptions _emailOptions;
     private readonly ILogger<BatchUploadService> _logger;
 
     public BatchUploadService(
@@ -39,8 +44,11 @@ public class BatchUploadService : IBatchUploadService
         ICurrentUserService currentUser,
         IAuditService auditService,
         ITransferService transferService,
+        IUserRoleAssignmentRepository roleAssignmentRepository,
+        IEmailService emailService,
         IOptions<BusinessRulesOptions> rules,
         IOptions<TransferServiceOptions> transferOptions,
+        IOptions<EmailOptions> emailOptions,
         ILogger<BatchUploadService> logger)
     {
         _fieldValidator = fieldValidator;
@@ -51,8 +59,11 @@ public class BatchUploadService : IBatchUploadService
         _currentUser = currentUser;
         _auditService = auditService;
         _transferService = transferService;
+        _roleAssignmentRepository = roleAssignmentRepository;
+        _emailService = emailService;
         _rules = rules.Value;
         _transferOptions = transferOptions.Value;
+        _emailOptions = emailOptions.Value;
         _logger = logger;
     }
 
@@ -274,8 +285,33 @@ public class BatchUploadService : IBatchUploadService
 
         _logger.LogInformation("Batch {BatchReference} submitted for review by {UserId}.", batch.BatchReference, _currentUser.UserId);
 
+        // Approval routing, initiator -> authorizer: any active SettlementApprover or
+        // Administrator may act on this batch (there is no single assigned authorizer per batch),
+        // so every one of them is notified. Best-effort — a delivery failure here must never
+        // undo the submission that already succeeded above.
+        await NotifyApproversAsync(batch, ct);
+
         return MapToResultDto(batch);
     }
+
+    private async Task NotifyApproversAsync(ReversalBatch batch, CancellationToken ct)
+    {
+        var approverEmails = await _roleAssignmentRepository.GetActiveEmailsByRolesAsync(
+            [AppRoles.SettlementApprover, AppRoles.Administrator], ct);
+
+        var link = BuildPortalLink($"approvals/{batch.BatchReference}");
+        var body =
+            $"<p>Batch <b>{Encode(batch.BatchReference)}</b> ('{Encode(batch.BatchName)}') was submitted for approval " +
+            $"by {Encode(batch.SubmittedByName ?? batch.UploadedByName)} with {batch.ValidRecords} valid record(s).</p>" +
+            (link is null ? "" : $"<p><a href=\"{link}\">Open in the Settlement Portal</a></p>");
+
+        await _emailService.SendAsync(approverEmails, $"Reversal batch {batch.BatchReference} awaiting your approval", body, ct);
+    }
+
+    private string? BuildPortalLink(string relativePath) =>
+        string.IsNullOrWhiteSpace(_emailOptions.PortalBaseUrl) ? null : $"{_emailOptions.PortalBaseUrl.TrimEnd('/')}/{relativePath}";
+
+    private static string Encode(string value) => WebUtility.HtmlEncode(value);
 
     private async Task<ReversalBatch> GetBatchOrThrowAsync(string batchReference, CancellationToken ct) =>
         await _batchRepository.GetByReferenceAsync(batchReference, includeTransactions: true, ct)

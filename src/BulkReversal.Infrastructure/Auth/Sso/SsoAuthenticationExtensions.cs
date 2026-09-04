@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using BulkReversal.Application.Common.Interfaces.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -93,30 +94,71 @@ public static class SsoAuthenticationExtensions
 
                         return Task.CompletedTask;
                     },
-                    OnTokenValidated = context =>
+                    // Resolves the caller's effective BulkReversal roles from two sources and
+                    // validates that at least one of them granted access: the SSO "appRoles" claim
+                    // (the Bank's central AD/SSO app-role registry) and this application's own
+                    // locally-assigned role table (see UserRoleAssignment / IRoleAssignmentService),
+                    // managed by a BulkReversal Administrator so access can be granted or revoked
+                    // immediately without waiting on a central AD/SSO update. Neither source alone
+                    // is trusted as final — the merged, de-duplicated set is what actually drives
+                    // [Authorize(Roles = ...)] below.
+                    OnTokenValidated = async context =>
                     {
                         var identity = context.Principal?.Identity as ClaimsIdentity;
+                        var userId = identity?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                            ?? identity?.FindFirst("sub")?.Value;
+
+                        var roles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
                         var appRolesClaim = identity?.FindFirst(ssoOptions.AppRolesClaimName)?.Value;
-
-                        if (string.IsNullOrWhiteSpace(appRolesClaim))
+                        if (!string.IsNullOrWhiteSpace(appRolesClaim))
                         {
-                            context.Fail("Application roles not found.");
-                            return Task.CompletedTask;
-                        }
-
-                        try
-                        {
-                            foreach (var role in ExtractRolesFromAppRolesMap(appRolesClaim))
+                            try
                             {
-                                identity?.AddClaim(new Claim(ClaimTypes.Role, role));
+                                foreach (var role in ExtractRolesFromAppRolesMap(appRolesClaim))
+                                {
+                                    roles.Add(role);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                context.Fail($"Role extraction failed: {ex.Message}");
+                                return;
                             }
                         }
-                        catch (Exception ex)
+
+                        if (!string.IsNullOrWhiteSpace(userId))
                         {
-                            context.Fail($"Role extraction failed: {ex.Message}");
+                            try
+                            {
+                                var roleRepository = context.HttpContext.RequestServices.GetRequiredService<IUserRoleAssignmentRepository>();
+                                var assignedRoles = await roleRepository.GetActiveRoleNamesAsync(userId, context.HttpContext.RequestAborted);
+                                foreach (var role in assignedRoles)
+                                {
+                                    roles.Add(role);
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                // A transient DB hiccup here must not lock out every user who already
+                                // has valid SSO app-roles — fail open on THIS source only, and let the
+                                // zero-roles check below still deny access if that was the sole grant.
+                                var logger = context.HttpContext.RequestServices.GetService<ILoggerFactory>()?
+                                    .CreateLogger("SsoAuthentication");
+                                logger?.LogWarning(ex, "Could not resolve locally-assigned roles for {UserId}; continuing with SSO app-roles only.", userId);
+                            }
                         }
 
-                        return Task.CompletedTask;
+                        if (roles.Count == 0)
+                        {
+                            context.Fail("No application roles could be resolved for this user from either the SSO app-role map or local role assignment.");
+                            return;
+                        }
+
+                        foreach (var role in roles)
+                        {
+                            identity?.AddClaim(new Claim(ClaimTypes.Role, role));
+                        }
                     },
                     OnAuthenticationFailed = context =>
                     {

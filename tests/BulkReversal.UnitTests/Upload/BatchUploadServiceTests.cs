@@ -27,9 +27,12 @@ public class BatchUploadServiceTests
     private readonly Mock<ICurrentUserService> _currentUser = new();
     private readonly Mock<IAuditService> _auditService = new();
     private readonly Mock<ITransferService> _transferService = new();
+    private readonly Mock<IUserRoleAssignmentRepository> _roleAssignmentRepository = new();
+    private readonly Mock<IEmailService> _emailService = new();
 
     private BusinessRulesOptions _rules = new() { MaxRecordsPerFile = 500, MaxTransactionAgeDays = 365 };
     private TransferServiceOptions _transferOptions = new() { Enabled = false };
+    private EmailOptions _emailOptions = new();
 
     public BatchUploadServiceTests()
     {
@@ -43,6 +46,9 @@ public class BatchUploadServiceTests
             .Setup(r => r.HasActiveConflictAsync(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(false);
         _unitOfWork.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
+        _roleAssignmentRepository
+            .Setup(r => r.GetActiveEmailsByRolesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Array.Empty<string>());
     }
 
     private BatchUploadService CreateSut() => new(
@@ -54,8 +60,11 @@ public class BatchUploadServiceTests
         _currentUser.Object,
         _auditService.Object,
         _transferService.Object,
+        _roleAssignmentRepository.Object,
+        _emailService.Object,
         Options.Create(_rules),
         Options.Create(_transferOptions),
+        Options.Create(_emailOptions),
         NullLogger<BatchUploadService>.Instance);
 
     private static TransactionRevalidationRequest ValidRow(string reference = "FT0000000001") => new()

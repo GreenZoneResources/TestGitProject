@@ -1,4 +1,5 @@
 using Asp.Versioning;
+using BulkReversal.API.Common;
 using BulkReversal.Application.Common.Constants;
 using BulkReversal.Application.Features.Approvals;
 using BulkReversal.Application.Features.Approvals.Dtos;
@@ -28,9 +29,13 @@ public class ApprovalsController : ControllerBase
     /// <summary>Batches awaiting sign-off, optionally filtered by batch reference.</summary>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> Search(
         [FromQuery] string? batchReference, [FromQuery] int page = 1, [FromQuery] int pageSize = 20, CancellationToken ct = default)
     {
+        if (this.ValidatePagination(page, pageSize) is { } invalid)
+            return invalid;
+
         var result = await _approvalService.SearchPendingAsync(batchReference, page, pageSize, ct);
         return Ok(result);
     }
@@ -38,10 +43,14 @@ public class ApprovalsController : ControllerBase
     /// <summary>Batch detail with its valid transaction rows, for review before sign-off.</summary>
     [HttpGet("{batchReference}")]
     [ProducesResponseType(typeof(ApprovalDetailDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<ApprovalDetailDto>> GetDetail(
         string batchReference, [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken ct = default)
     {
+        if (this.ValidatePagination(page, pageSize) is { } invalid)
+            return invalid;
+
         var result = await _approvalService.GetDetailAsync(batchReference, page, pageSize, ct);
         return Ok(result);
     }

@@ -1,5 +1,7 @@
+using System.Text;
 using BulkReversal.Application.Common.Interfaces;
 using BulkReversal.Application.Features.StatusMonitoring.Dtos;
+using BulkReversal.Application.Features.Upload;
 using BulkReversal.Application.Features.Upload.Dtos;
 using ClosedXML.Excel;
 using QuestPDF.Fluent;
@@ -8,9 +10,15 @@ using QuestPDF.Infrastructure;
 
 namespace BulkReversal.Infrastructure.Reporting;
 
-/// <summary>Excel/PDF artifacts for FR-05 (template), FR-08 (error report), FR-17 (status export).</summary>
+/// <summary>Excel/CSV/PDF artifacts for FR-05 (template), FR-08 (error report), FR-17 (status export).</summary>
 public class ReportExportService : IReportExportService
 {
+    private static readonly string[] SampleRow =
+    [
+        "1", "NIP", "0001260805114523000456", "", "0123456789", DateTime.UtcNow.ToString("dd/MM/yyyy"),
+        "50000.00", "NIP", "GTBank", "", "No value received by beneficiary", ""
+    ];
+
     public byte[] BuildUploadTemplate()
     {
         using var workbook = new XLWorkbook();
@@ -26,14 +34,9 @@ public class ReportExportService : IReportExportService
         }
 
         // One illustrative sample row, matching the BRD Section 6 examples.
-        var sample = new[]
+        for (var i = 0; i < SampleRow.Length; i++)
         {
-            "1", "NIP", "0001260805114523000456", "", "0123456789", DateTime.UtcNow.ToString("dd/MM/yyyy"),
-            "50000.00", "NIP", "GTBank", "", "No value received by beneficiary", ""
-        };
-        for (var i = 0; i < sample.Length; i++)
-        {
-            sheet.Cell(2, i + 1).Value = sample[i];
+            sheet.Cell(2, i + 1).Value = SampleRow[i];
         }
 
         sheet.SheetView.FreezeRows(1);
@@ -42,6 +45,38 @@ public class ReportExportService : IReportExportService
         using var stream = new MemoryStream();
         workbook.SaveAs(stream);
         return stream.ToArray();
+    }
+
+    public byte[] BuildUploadTemplateCsv()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine(string.Join(',', UploadTemplateColumns.All.Select(CsvField)));
+        sb.AppendLine(string.Join(',', SampleRow.Select(CsvField)));
+
+        // UTF-8 BOM so Excel (still the most common consumer of a downloaded .csv) detects the
+        // encoding correctly instead of mis-rendering non-ASCII characters.
+        return new byte[] { 0xEF, 0xBB, 0xBF }.Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
+    }
+
+    private static string CsvField(string value)
+    {
+        value = SanitizeAgainstFormulaInjection(value);
+        var needsQuoting = value.IndexOfAny([',', '"', '\n', '\r']) >= 0;
+        return needsQuoting ? $"\"{value.Replace("\"", "\"\"")}\"" : value;
+    }
+
+    /// <summary>
+    /// Defends against CSV/Excel "formula injection": a cell value that starts with =, +, -, or @
+    /// can be interpreted as a formula by Excel/Sheets/other spreadsheet tools when the file is
+    /// opened or re-imported (OWASP: CSV Injection), letting attacker-controlled data (e.g. a
+    /// crafted Session ID / FT Reference or a callback failure reason from the reversal engine)
+    /// execute a formula/command on whoever opens the exported report. Prefixing with a leading
+    /// apostrophe forces spreadsheet applications to treat the value as plain text.
+    /// </summary>
+    private static string SanitizeAgainstFormulaInjection(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return value ?? string.Empty;
+        return value[0] is '=' or '+' or '-' or '@' or '\t' or '\r' ? "'" + value : value;
     }
 
     public byte[] BuildInvalidRowsReport(UploadBatchResultDto result)
@@ -61,8 +96,8 @@ public class ReportExportService : IReportExportService
         foreach (var row in result.InvalidRows.OrderBy(r => r.RowNumber))
         {
             sheet.Cell(rowIndex, 1).Value = row.RowNumber;
-            sheet.Cell(rowIndex, 2).Value = row.SessionIdOrFtReference ?? string.Empty;
-            sheet.Cell(rowIndex, 3).Value = string.Join("; ", row.Errors);
+            sheet.Cell(rowIndex, 2).Value = SanitizeAgainstFormulaInjection(row.SessionIdOrFtReference);
+            sheet.Cell(rowIndex, 3).Value = SanitizeAgainstFormulaInjection(string.Join("; ", row.Errors));
             rowIndex++;
         }
 
@@ -97,13 +132,13 @@ public class ReportExportService : IReportExportService
         var rowIndex = 2;
         foreach (var row in rows)
         {
-            sheet.Cell(rowIndex, 1).Value = row.SessionIdOrFtReference;
+            sheet.Cell(rowIndex, 1).Value = SanitizeAgainstFormulaInjection(row.SessionIdOrFtReference);
             sheet.Cell(rowIndex, 2).Value = row.TransactionType.ToString();
             sheet.Cell(rowIndex, 3).Value = row.TransactionAmount;
-            sheet.Cell(rowIndex, 4).Value = row.BatchReference;
+            sheet.Cell(rowIndex, 4).Value = SanitizeAgainstFormulaInjection(row.BatchReference);
             sheet.Cell(rowIndex, 5).Value = row.Status?.ToString() ?? string.Empty;
-            sheet.Cell(rowIndex, 6).Value = row.ExternalReference ?? string.Empty;
-            sheet.Cell(rowIndex, 7).Value = row.FailureReason ?? string.Empty;
+            sheet.Cell(rowIndex, 6).Value = SanitizeAgainstFormulaInjection(row.ExternalReference);
+            sheet.Cell(rowIndex, 7).Value = SanitizeAgainstFormulaInjection(row.FailureReason);
             sheet.Cell(rowIndex, 8).Value = row.LastUpdated.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss");
             rowIndex++;
         }

@@ -20,9 +20,4 @@ public static class AppRoles
     public const string AnyUser = $"{SettlementUser},{SettlementApprover},{Administrator}";
 
     public const string ApproverOrAdmin = $"{SettlementApprover},{Administrator}";
-
-    /// <summary>The full set of role names an Administrator may assign via role management —
-    /// kept as an array (rather than only the comma-joined strings above) so callers can validate
-    /// a single incoming role name against it.</summary>
-    public static readonly IReadOnlyCollection<string> Assignable = [SettlementUser, SettlementApprover, Administrator];
 }

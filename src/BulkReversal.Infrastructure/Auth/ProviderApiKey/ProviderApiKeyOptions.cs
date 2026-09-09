@@ -4,17 +4,20 @@ namespace BulkReversal.Infrastructure.Auth.ProviderApiKey;
 
 /// <summary>
 /// Secures the two machine-to-machine endpoints the reversal engine calls (GET pending-reversals,
-/// POST callback — provider-integration-contract.md §3, AuthType "ApiKey": header
-/// "X-API-Key: &lt;secret&gt;"). Bound from appsettings.json ("ProviderApiKey"). These endpoints are
-/// never used by Settlement-team browsers, so they intentionally sit outside the SSO/"CustomJwt"
-/// scheme used by the portal UI.
+/// POST callback — provider-integration-contract.md §3, AuthType "ApiKey": standard
+/// "Authorization: ApiKey &lt;secret&gt;" header). Bound from appsettings.json ("ProviderApiKey").
+/// These endpoints are never used by Settlement-team browsers and never require SSO — they
+/// intentionally sit outside the SSO/"CustomJwt" scheme used by the portal UI, and SSO is never a
+/// criterion for reaching them.
 /// </summary>
 public class ProviderApiKeyOptions : AuthenticationSchemeOptions
 {
     public const string SectionName = "ProviderApiKey";
     public const string SchemeName = "ProviderApiKey";
 
-    public string HeaderName { get; set; } = "X-API-Key";
+    /// <summary>The scheme token expected in the "Authorization" header, e.g.
+    /// "Authorization: ApiKey &lt;secret&gt;".</summary>
+    public string AuthorizationScheme { get; set; } = "ApiKey";
 
     /// <summary>
     /// One or more accepted keys (supports zero-downtime rotation: add the new key, redeploy Wisdom's

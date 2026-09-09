@@ -51,7 +51,7 @@ public static class DependencyInjection
         services.AddScoped<IReversalBatchRepository, ReversalBatchRepository>();
         services.AddScoped<IReversalTransactionRepository, ReversalTransactionRepository>();
         services.AddScoped<IAuditLogRepository, AuditLogRepository>();
-        services.AddScoped<IUserRoleAssignmentRepository, UserRoleAssignmentRepository>();
+        services.AddScoped<IUserContactDirectoryRepository, UserContactDirectoryRepository>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IBatchReferenceGenerator, BatchReferenceGenerator>();
 

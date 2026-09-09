@@ -107,9 +107,11 @@ try
 
         options.AddSecurityDefinition(ProviderApiKeyOptions.SchemeName, new OpenApiSecurityScheme
         {
-            Name = "X-API-Key",
-            Type = SecuritySchemeType.ApiKey,
-            In = ParameterLocation.Header
+            Name = "Authorization",
+            Type = SecuritySchemeType.Http,
+            Scheme = "ApiKey",
+            In = ParameterLocation.Header,
+            Description = "Provider API key, e.g. \"Authorization: ApiKey <your-key>\". SSO is never required for these endpoints."
         });
     });
 

@@ -1,8 +1,9 @@
-namespace BulkReversal.Infrastructure.Reporting;
+namespace BulkReversal.Application.Features.Upload;
 
-/// <summary>Canonical Reversal Upload Template headers (BRD Section 6), used to build the
-/// downloadable reference template (FR-05) and the FR-08 invalid-rows/FR-17 status reports.</summary>
-internal static class UploadTemplateColumns
+/// <summary>Canonical Reversal Upload Template headers (BRD Section 6) — the single source of
+/// truth for both the downloadable reference template (Excel/CSV, FR-05) and the CSV upload
+/// parser, so the two can never drift out of column-order sync with each other.</summary>
+public static class UploadTemplateColumns
 {
     public const string SerialNumber = "S/N";
     public const string TransactionType = "Transaction Type";

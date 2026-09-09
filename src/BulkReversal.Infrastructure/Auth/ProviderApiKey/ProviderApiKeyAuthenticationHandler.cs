@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 
 namespace BulkReversal.Infrastructure.Auth.ProviderApiKey;
 
-/// <summary>Validates the "X-API-Key" header against the configured provider key(s) using a
+/// <summary>Validates an "Authorization: ApiKey &lt;key&gt;" header against the configured provider key(s) using a
 /// constant-time comparison, to avoid leaking key material through response-timing side channels.</summary>
 public class ProviderApiKeyAuthenticationHandler : AuthenticationHandler<ProviderApiKeyOptions>
 {
@@ -25,15 +25,25 @@ public class ProviderApiKeyAuthenticationHandler : AuthenticationHandler<Provide
 
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
-        if (!Request.Headers.TryGetValue(Options.HeaderName, out var providedValues) || providedValues.Count == 0)
+        if (!Request.Headers.TryGetValue("Authorization", out var headerValues) || headerValues.Count == 0)
         {
-            return Task.FromResult(AuthenticateResult.Fail($"Missing '{Options.HeaderName}' header."));
+            return Task.FromResult(AuthenticateResult.Fail(
+                $"Missing 'Authorization' header. Expected: Authorization: {Options.AuthorizationScheme} <key>"));
         }
 
-        var provided = providedValues.ToString();
+        var headerValue = headerValues.ToString();
+        var expectedPrefix = Options.AuthorizationScheme + " ";
+        if (!headerValue.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(AuthenticateResult.Fail(
+                $"Malformed 'Authorization' header. Expected: Authorization: {Options.AuthorizationScheme} <key>"));
+        }
+
+        var provided = headerValue[expectedPrefix.Length..].Trim();
         if (string.IsNullOrWhiteSpace(provided))
         {
-            return Task.FromResult(AuthenticateResult.Fail($"Missing '{Options.HeaderName}' header."));
+            return Task.FromResult(AuthenticateResult.Fail(
+                $"Malformed 'Authorization' header. Expected: Authorization: {Options.AuthorizationScheme} <key>"));
         }
 
         if (Options.ApiKeys.Length == 0)

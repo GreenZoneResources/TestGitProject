@@ -94,70 +94,63 @@ public static class SsoAuthenticationExtensions
 
                         return Task.CompletedTask;
                     },
-                    // Resolves the caller's effective BulkReversal roles from two sources and
-                    // validates that at least one of them granted access: the SSO "appRoles" claim
-                    // (the Bank's central AD/SSO app-role registry) and this application's own
-                    // locally-assigned role table (see UserRoleAssignment / IRoleAssignmentService),
-                    // managed by a BulkReversal Administrator so access can be granted or revoked
-                    // immediately without waiting on a central AD/SSO update. Neither source alone
-                    // is trusted as final — the merged, de-duplicated set is what actually drives
-                    // [Authorize(Roles = ...)] below.
+                    // Authorization is decided solely by the SSO "appRoles" claim (the Bank's
+                    // central AD/SSO app-role registry for this application, FR-01/FR-02) — there is
+                    // no locally-managed role/permission override. A best-effort, non-authoritative
+                    // sync of the resolved roles into UserContactDirectory happens afterward purely
+                    // so the approval-routing notification emails know who to reach; it never affects
+                    // this authentication/authorization decision.
                     OnTokenValidated = async context =>
                     {
                         var identity = context.Principal?.Identity as ClaimsIdentity;
-                        var userId = identity?.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                            ?? identity?.FindFirst("sub")?.Value;
-
-                        var roles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
                         var appRolesClaim = identity?.FindFirst(ssoOptions.AppRolesClaimName)?.Value;
-                        if (!string.IsNullOrWhiteSpace(appRolesClaim))
+
+                        if (string.IsNullOrWhiteSpace(appRolesClaim))
                         {
-                            try
-                            {
-                                foreach (var role in ExtractRolesFromAppRolesMap(appRolesClaim))
-                                {
-                                    roles.Add(role);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                context.Fail($"Role extraction failed: {ex.Message}");
-                                return;
-                            }
+                            context.Fail("Application roles not found.");
+                            return;
                         }
 
-                        if (!string.IsNullOrWhiteSpace(userId))
+                        List<string> roles;
+                        try
                         {
-                            try
-                            {
-                                var roleRepository = context.HttpContext.RequestServices.GetRequiredService<IUserRoleAssignmentRepository>();
-                                var assignedRoles = await roleRepository.GetActiveRoleNamesAsync(userId, context.HttpContext.RequestAborted);
-                                foreach (var role in assignedRoles)
-                                {
-                                    roles.Add(role);
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                // A transient DB hiccup here must not lock out every user who already
-                                // has valid SSO app-roles — fail open on THIS source only, and let the
-                                // zero-roles check below still deny access if that was the sole grant.
-                                var logger = context.HttpContext.RequestServices.GetService<ILoggerFactory>()?
-                                    .CreateLogger("SsoAuthentication");
-                                logger?.LogWarning(ex, "Could not resolve locally-assigned roles for {UserId}; continuing with SSO app-roles only.", userId);
-                            }
+                            roles = ExtractRolesFromAppRolesMap(appRolesClaim);
+                        }
+                        catch (Exception ex)
+                        {
+                            context.Fail($"Role extraction failed: {ex.Message}");
+                            return;
                         }
 
                         if (roles.Count == 0)
                         {
-                            context.Fail("No application roles could be resolved for this user from either the SSO app-role map or local role assignment.");
+                            context.Fail("Application roles not found.");
                             return;
                         }
 
                         foreach (var role in roles)
                         {
                             identity?.AddClaim(new Claim(ClaimTypes.Role, role));
+                        }
+
+                        var userId = identity?.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                            ?? identity?.FindFirst("sub")?.Value;
+                        var userName = identity?.FindFirst("name")?.Value ?? identity?.FindFirst(ClaimTypes.Name)?.Value ?? userId;
+                        var email = identity?.FindFirst(ClaimTypes.Email)?.Value ?? identity?.FindFirst("email")?.Value;
+
+                        if (!string.IsNullOrWhiteSpace(userId) && !string.IsNullOrWhiteSpace(email))
+                        {
+                            try
+                            {
+                                var directory = context.HttpContext.RequestServices.GetRequiredService<IUserContactDirectoryRepository>();
+                                await directory.SyncFromSignInAsync(userId, userName ?? userId, email, roles, context.HttpContext.RequestAborted);
+                            }
+                            catch (Exception ex)
+                            {
+                                var logger = context.HttpContext.RequestServices.GetService<ILoggerFactory>()?
+                                    .CreateLogger("SsoAuthentication");
+                                logger?.LogWarning(ex, "Could not sync the notification contact directory for {UserId}; sign-in still succeeds.", userId);
+                            }
                         }
                     },
                     OnAuthenticationFailed = context =>

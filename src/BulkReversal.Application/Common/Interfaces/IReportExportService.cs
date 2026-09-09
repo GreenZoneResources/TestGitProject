@@ -6,8 +6,12 @@ namespace BulkReversal.Application.Common.Interfaces;
 /// <summary>Produces the downloadable artifacts referenced by FR-05, FR-08, and FR-17.</summary>
 public interface IReportExportService
 {
-    /// <summary>The blank Reversal Upload Template, with headers matching BRD Section 6 (FR-05).</summary>
+    /// <summary>The blank Reversal Upload Template (Excel), with headers matching BRD Section 6 (FR-05).</summary>
     byte[] BuildUploadTemplate();
+
+    /// <summary>The same Reversal Upload Template as CSV, for callers who'd rather work with a
+    /// plain-text/spreadsheet-agnostic format.</summary>
+    byte[] BuildUploadTemplateCsv();
 
     /// <summary>Per-row error report for a validated batch's invalid rows (FR-08).</summary>
     byte[] BuildInvalidRowsReport(UploadBatchResultDto result);

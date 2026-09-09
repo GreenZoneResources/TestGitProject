@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace BulkReversal.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(BulkReversalDbContext))]
-    [Migration("20260904132017_AddUserRoleAssignments")]
-    partial class AddUserRoleAssignments
+    [Migration("20260909081806_AddUserContactDirectory")]
+    partial class AddUserContactDirectory
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -307,21 +307,11 @@ namespace BulkReversal.Infrastructure.Persistence.Migrations
                     b.ToTable("ReversalTransactions", (string)null);
                 });
 
-            modelBuilder.Entity("BulkReversal.Domain.Entities.UserRoleAssignment", b =>
+            modelBuilder.Entity("BulkReversal.Domain.Entities.UserContactDirectoryEntry", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uniqueidentifier");
-
-                    b.Property<string>("AssignedByName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("AssignedByUserId")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("datetimeoffset");
@@ -336,19 +326,11 @@ namespace BulkReversal.Infrastructure.Persistence.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("nvarchar(256)");
 
-                    b.Property<bool>("IsActive")
+                    b.Property<bool>("IsCurrentlyHeld")
                         .HasColumnType("bit");
 
-                    b.Property<DateTimeOffset?>("RevokedAt")
+                    b.Property<DateTimeOffset>("LastSeenAt")
                         .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("RevokedByName")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<string>("RevokedByUserId")
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
 
                     b.Property<string>("Role")
                         .IsRequired()
@@ -376,14 +358,10 @@ namespace BulkReversal.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("Role");
 
-                    b.HasIndex("UserId");
-
                     b.HasIndex("UserId", "Role")
-                        .IsUnique()
-                        .HasDatabaseName("IX_UserRoleAssignments_UserId_Role_Active")
-                        .HasFilter("[IsActive] = 1");
+                        .IsUnique();
 
-                    b.ToTable("UserRoleAssignments", (string)null);
+                    b.ToTable("UserContactDirectory", (string)null);
                 });
 
             modelBuilder.Entity("BulkReversal.Domain.Entities.ReversalTransaction", b =>

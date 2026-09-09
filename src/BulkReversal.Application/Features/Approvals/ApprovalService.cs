@@ -20,7 +20,7 @@ public class ApprovalService : IApprovalService
     private readonly IUnitOfWork _unitOfWork;
     private readonly ICurrentUserService _currentUser;
     private readonly IAuditService _auditService;
-    private readonly IUserRoleAssignmentRepository _roleAssignmentRepository;
+    private readonly IUserContactDirectoryRepository _contactDirectory;
     private readonly IEmailService _emailService;
     private readonly EmailOptions _emailOptions;
     private readonly ILogger<ApprovalService> _logger;
@@ -31,7 +31,7 @@ public class ApprovalService : IApprovalService
         IUnitOfWork unitOfWork,
         ICurrentUserService currentUser,
         IAuditService auditService,
-        IUserRoleAssignmentRepository roleAssignmentRepository,
+        IUserContactDirectoryRepository contactDirectory,
         IEmailService emailService,
         IOptions<EmailOptions> emailOptions,
         ILogger<ApprovalService> logger)
@@ -41,7 +41,7 @@ public class ApprovalService : IApprovalService
         _unitOfWork = unitOfWork;
         _currentUser = currentUser;
         _auditService = auditService;
-        _roleAssignmentRepository = roleAssignmentRepository;
+        _contactDirectory = contactDirectory;
         _emailService = emailService;
         _emailOptions = emailOptions.Value;
         _logger = logger;
@@ -136,7 +136,7 @@ public class ApprovalService : IApprovalService
     private async Task NotifyInitiatorOfDecisionAsync(ReversalBatch batch, bool approved, string? reason, CancellationToken ct)
     {
         var initiatorUserId = batch.SubmittedByUserId ?? batch.UploadedByUserId;
-        var initiatorEmail = await _roleAssignmentRepository.GetActiveEmailForUserAsync(initiatorUserId, ct);
+        var initiatorEmail = await _contactDirectory.GetEmailForUserAsync(initiatorUserId, ct);
         if (string.IsNullOrWhiteSpace(initiatorEmail))
         {
             _logger.LogWarning("No email on file for {UserId}; skipping decision notification for batch {BatchReference}.", initiatorUserId, batch.BatchReference);

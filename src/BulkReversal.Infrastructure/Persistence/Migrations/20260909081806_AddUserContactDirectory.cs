@@ -6,13 +6,13 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace BulkReversal.Infrastructure.Persistence.Migrations
 {
     /// <inheritdoc />
-    public partial class AddUserRoleAssignments : Migration
+    public partial class AddUserContactDirectory : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.CreateTable(
-                name: "UserRoleAssignments",
+                name: "UserContactDirectory",
                 columns: table => new
                 {
                     Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
@@ -20,12 +20,8 @@ namespace BulkReversal.Infrastructure.Persistence.Migrations
                     UserName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: false),
                     Email = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
                     Role = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
-                    IsActive = table.Column<bool>(type: "bit", nullable: false),
-                    AssignedByUserId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
-                    AssignedByName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: false),
-                    RevokedAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: true),
-                    RevokedByUserId = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: true),
-                    RevokedByName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
+                    IsCurrentlyHeld = table.Column<bool>(type: "bit", nullable: false),
+                    LastSeenAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: false),
                     CreatedAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: false),
                     CreatedBy = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
                     UpdatedAt = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: true),
@@ -33,32 +29,26 @@ namespace BulkReversal.Infrastructure.Persistence.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_UserRoleAssignments", x => x.Id);
+                    table.PrimaryKey("PK_UserContactDirectory", x => x.Id);
                 });
 
             migrationBuilder.CreateIndex(
-                name: "IX_UserRoleAssignments_Role",
-                table: "UserRoleAssignments",
+                name: "IX_UserContactDirectory_Role",
+                table: "UserContactDirectory",
                 column: "Role");
 
             migrationBuilder.CreateIndex(
-                name: "IX_UserRoleAssignments_UserId",
-                table: "UserRoleAssignments",
-                column: "UserId");
-
-            migrationBuilder.CreateIndex(
-                name: "IX_UserRoleAssignments_UserId_Role_Active",
-                table: "UserRoleAssignments",
+                name: "IX_UserContactDirectory_UserId_Role",
+                table: "UserContactDirectory",
                 columns: new[] { "UserId", "Role" },
-                unique: true,
-                filter: "[IsActive] = 1");
+                unique: true);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropTable(
-                name: "UserRoleAssignments");
+                name: "UserContactDirectory");
         }
     }
 }

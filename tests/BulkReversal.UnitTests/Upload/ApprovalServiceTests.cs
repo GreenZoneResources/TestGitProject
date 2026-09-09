@@ -20,7 +20,7 @@ public class ApprovalServiceTests
     private readonly Mock<IUnitOfWork> _unitOfWork = new();
     private readonly Mock<ICurrentUserService> _currentUser = new();
     private readonly Mock<IAuditService> _auditService = new();
-    private readonly Mock<IUserRoleAssignmentRepository> _roleAssignmentRepository = new();
+    private readonly Mock<IUserContactDirectoryRepository> _contactDirectory = new();
     private readonly Mock<IEmailService> _emailService = new();
 
     public ApprovalServiceTests()
@@ -28,14 +28,14 @@ public class ApprovalServiceTests
         _currentUser.Setup(u => u.UserId).Returns("approver1");
         _currentUser.Setup(u => u.UserName).Returns("Jane Approver");
         _unitOfWork.Setup(u => u.SaveChangesAsync(It.IsAny<CancellationToken>())).ReturnsAsync(1);
-        _roleAssignmentRepository
-            .Setup(r => r.GetActiveEmailForUserAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+        _contactDirectory
+            .Setup(r => r.GetEmailForUserAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync("initiator@bank.local");
     }
 
     private ApprovalService CreateSut() => new(
         _batchRepository.Object, _transactionRepository.Object, _unitOfWork.Object,
-        _currentUser.Object, _auditService.Object, _roleAssignmentRepository.Object, _emailService.Object,
+        _currentUser.Object, _auditService.Object, _contactDirectory.Object, _emailService.Object,
         Options.Create(new EmailOptions()), NullLogger<ApprovalService>.Instance);
 
     private static ReversalBatch BuildPendingApprovalBatch(out ReversalTransaction row, string reference = "FT0000000001")

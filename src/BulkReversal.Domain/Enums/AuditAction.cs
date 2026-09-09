@@ -10,7 +10,5 @@ public enum AuditAction
     Rejection = 5,
     ApiRetrieval = 6,
     ProcessingOutcome = 7,
-    Exception = 8,
-    RoleAssigned = 9,
-    RoleRevoked = 10
+    Exception = 8
 }

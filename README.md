@@ -33,9 +33,10 @@ references Infrastructure or ASP.NET Core.
    port of the Bank's shared `ServiceManager.RegisterAuthService` pattern — or from an appsettings
    fallback for local development (`Sso:UseDatabaseTokenSettings: false`).
 2. **Reversal engine** (`/api/reversals/pending`, `/api/reversals/callback`) — static API key via
-   the `X-API-Key` header, matching `provider-integration-contract.md` §3 `AuthType: ApiKey`. These
-   two endpoints are what Wisdom's `SingleReversalEngine.Orchestrator` polls and posts back to;
-   BulkReversal.API is the "provider" in that contract.
+   the standard `Authorization: ApiKey <key>` header, matching `provider-integration-contract.md`
+   §3 `AuthType: ApiKey`. SSO is never a criterion for these two endpoints — they are what Wisdom's
+   `SingleReversalEngine.Orchestrator` polls and posts back to; BulkReversal.API is the "provider"
+   in that contract.
 
 ## Configuration
 

@@ -28,7 +28,7 @@ public class BatchUploadService : IBatchUploadService
     private readonly ICurrentUserService _currentUser;
     private readonly IAuditService _auditService;
     private readonly ITransferService _transferService;
-    private readonly IUserRoleAssignmentRepository _roleAssignmentRepository;
+    private readonly IUserContactDirectoryRepository _contactDirectory;
     private readonly IEmailService _emailService;
     private readonly BusinessRulesOptions _rules;
     private readonly TransferServiceOptions _transferOptions;
@@ -44,7 +44,7 @@ public class BatchUploadService : IBatchUploadService
         ICurrentUserService currentUser,
         IAuditService auditService,
         ITransferService transferService,
-        IUserRoleAssignmentRepository roleAssignmentRepository,
+        IUserContactDirectoryRepository contactDirectory,
         IEmailService emailService,
         IOptions<BusinessRulesOptions> rules,
         IOptions<TransferServiceOptions> transferOptions,
@@ -59,7 +59,7 @@ public class BatchUploadService : IBatchUploadService
         _currentUser = currentUser;
         _auditService = auditService;
         _transferService = transferService;
-        _roleAssignmentRepository = roleAssignmentRepository;
+        _contactDirectory = contactDirectory;
         _emailService = emailService;
         _rules = rules.Value;
         _transferOptions = transferOptions.Value;
@@ -296,7 +296,7 @@ public class BatchUploadService : IBatchUploadService
 
     private async Task NotifyApproversAsync(ReversalBatch batch, CancellationToken ct)
     {
-        var approverEmails = await _roleAssignmentRepository.GetActiveEmailsByRolesAsync(
+        var approverEmails = await _contactDirectory.GetEmailsByRolesAsync(
             [AppRoles.SettlementApprover, AppRoles.Administrator], ct);
 
         var link = BuildPortalLink($"approvals/{batch.BatchReference}");

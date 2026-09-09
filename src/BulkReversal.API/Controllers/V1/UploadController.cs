@@ -85,7 +85,7 @@ public class UploadController : ControllerBase
     [ProducesResponseType(typeof(UploadBatchResultDto), StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<UploadBatchResultDto>> CreateFromCsv(
-        [FromForm] string batchName, [FromForm] IFormFile? file, CancellationToken ct)
+        [FromForm] string batchName, IFormFile? file, CancellationToken ct)
     {
         if (file is null || file.Length == 0)
         {

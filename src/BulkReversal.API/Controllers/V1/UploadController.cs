@@ -1,8 +1,10 @@
 using System.Text;
 using Asp.Versioning;
+using BulkReversal.API.Common;
 using BulkReversal.Application.Common.Constants;
 using BulkReversal.Application.Common.Exceptions;
 using BulkReversal.Application.Common.Interfaces;
+using BulkReversal.Application.Common.Models;
 using BulkReversal.Application.Features.Upload.Dtos;
 using BulkReversal.Application.Features.Upload.Services;
 using FluentValidation;
@@ -133,13 +135,18 @@ public class UploadController : ControllerBase
         return CreatedAtAction(nameof(GetRecords), new { batchReference = result.BatchReference }, result);
     }
 
-    /// <summary>Staged rows for the Upload results/review screen.</summary>
+    /// <summary>A page of staged rows for the Upload results/review screen.</summary>
     [HttpGet("{batchReference}/records")]
-    [ProducesResponseType(typeof(IReadOnlyList<TransactionRowDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(PagedResult<TransactionRowDto>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<IReadOnlyList<TransactionRowDto>>> GetRecords(string batchReference, CancellationToken ct)
+    public async Task<ActionResult<PagedResult<TransactionRowDto>>> GetRecords(
+        string batchReference, [FromQuery] int page = 1, [FromQuery] int pageSize = 50, CancellationToken ct = default)
     {
-        var records = await _uploadService.GetRecordsAsync(batchReference, ct);
+        if (this.ValidatePagination(page, pageSize) is { } invalid)
+            return invalid;
+
+        var records = await _uploadService.GetRecordsAsync(batchReference, page, pageSize, ct);
         return Ok(records);
     }
 

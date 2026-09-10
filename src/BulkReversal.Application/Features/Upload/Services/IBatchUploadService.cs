@@ -1,3 +1,4 @@
+using BulkReversal.Application.Common.Models;
 using BulkReversal.Application.Features.Upload.Dtos;
 
 namespace BulkReversal.Application.Features.Upload.Services;
@@ -12,8 +13,8 @@ public interface IBatchUploadService
     /// batch, e.g. to regenerate the FR-08 error report.</summary>
     Task<UploadBatchResultDto> GetResultAsync(string batchReference, CancellationToken ct = default);
 
-    /// <summary>All rows of a staged batch, for the review table.</summary>
-    Task<IReadOnlyList<TransactionRowDto>> GetRecordsAsync(string batchReference, CancellationToken ct = default);
+    /// <summary>A page of the staged batch's rows (row number ascending), for the review table.</summary>
+    Task<PagedResult<TransactionRowDto>> GetRecordsAsync(string batchReference, int page, int pageSize, CancellationToken ct = default);
 
     /// <summary>Corrects a staged row and revalidates it in place (field rules, in-batch duplicates,
     /// already-reversed, and source-transaction checks). Only permitted before submission for review.</summary>

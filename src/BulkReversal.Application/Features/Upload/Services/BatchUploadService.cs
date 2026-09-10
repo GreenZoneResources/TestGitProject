@@ -3,6 +3,7 @@ using BulkReversal.Application.Common.Constants;
 using BulkReversal.Application.Common.Exceptions;
 using BulkReversal.Application.Common.Interfaces;
 using BulkReversal.Application.Common.Interfaces.Persistence;
+using BulkReversal.Application.Common.Models;
 using BulkReversal.Application.Common.Options;
 using BulkReversal.Application.Features.Audit;
 using BulkReversal.Application.Features.Upload.Dtos;
@@ -173,14 +174,22 @@ public class BatchUploadService : IBatchUploadService
         return MapToResultDto(batch);
     }
 
-    public async Task<IReadOnlyList<TransactionRowDto>> GetRecordsAsync(string batchReference, CancellationToken ct = default)
+    public async Task<PagedResult<TransactionRowDto>> GetRecordsAsync(string batchReference, int page, int pageSize, CancellationToken ct = default)
     {
         var batch = await GetBatchOrThrowAsync(batchReference, ct);
 
-        return batch.Transactions
-            .OrderBy(t => t.RowNumber)
+        // A batch is capped at BusinessRulesOptions.MaxRecordsPerFile (BRU-01, default 500) and is
+        // already loaded whole (GetBatchOrThrowAsync includes transactions), so paging is a cheap
+        // in-memory slice rather than a second database round trip.
+        var ordered = batch.Transactions.OrderBy(t => t.RowNumber).ToList();
+
+        var pageItems = ordered
+            .Skip(Math.Max(0, (page - 1) * pageSize))
+            .Take(Math.Max(1, pageSize))
             .Select(MapToRowDto)
             .ToList();
+
+        return PagedResult<TransactionRowDto>.Create(pageItems, page, pageSize, ordered.Count);
     }
 
     public async Task<UploadBatchResultDto> EditRecordAsync(

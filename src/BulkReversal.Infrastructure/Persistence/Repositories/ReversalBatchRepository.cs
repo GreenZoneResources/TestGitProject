@@ -82,9 +82,24 @@ public class ReversalBatchRepository : IReversalBatchRepository
 
     public async Task<DashboardCounts> GetDashboardCountsAsync(CancellationToken ct = default)
     {
+        // "Submitted" is a rolling monthly activity count (how many rows were released to the
+        // engine so far this calendar month), everything else is a live snapshot of current state
+        // (how many are sitting in that state right now, regardless of when they got there).
+        var now = DateTimeOffset.UtcNow;
+        var monthStart = new DateTimeOffset(now.Year, now.Month, 1, 0, 0, 0, TimeSpan.Zero);
+
+        // A row's Status flips to Submitted at the moment its batch is approved (ReversalBatch.Approve
+        // -> ReversalTransaction.Submit), so the batch's DecidedAt is that row's "submitted at" —
+        // ReversalTransaction itself doesn't carry a dedicated timestamp for that specific transition.
+        var submittedThisMonth = await _db.ReversalTransactions
+            .AsNoTracking()
+            .Where(t => t.Status == ReversalStatus.Submitted)
+            .Join(_db.ReversalBatches, t => t.BatchId, b => b.Id, (t, b) => b.DecidedAt)
+            .CountAsync(decidedAt => decidedAt != null && decidedAt >= monthStart, ct);
+
         var statusCounts = await _db.ReversalTransactions
             .AsNoTracking()
-            .Where(t => t.Status != null)
+            .Where(t => t.Status == ReversalStatus.Processing || t.Status == ReversalStatus.Reversed || t.Status == ReversalStatus.Rejected)
             .GroupBy(t => t.Status)
             .Select(g => new { Status = g.Key!.Value, Count = g.Count() })
             .ToListAsync(ct);
@@ -92,7 +107,7 @@ public class ReversalBatchRepository : IReversalBatchRepository
         int Count(ReversalStatus status) => statusCounts.FirstOrDefault(x => x.Status == status)?.Count ?? 0;
 
         return new DashboardCounts(
-            Submitted: Count(ReversalStatus.Submitted),
+            Submitted: submittedThisMonth,
             PendingProcessing: Count(ReversalStatus.Processing),
             Reversed: Count(ReversalStatus.Reversed),
             RejectedNeedsReview: Count(ReversalStatus.Rejected));

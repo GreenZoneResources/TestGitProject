@@ -7,12 +7,11 @@ namespace BulkReversal.API.Common;
 // ActionResult converts implicitly to both, while IActionResult does not convert to ActionResult<T>.
 
 /// <summary>
-/// Shared query-parameter guards for GET endpoints: page/pageSize, bounded counts, and date
-/// ranges. Without this, an out-of-range pageSize (zero, negative, or absurdly large) either got
-/// silently clamped deep in a repository or, for a raw count parameter like Dashboard's
-/// recentBatchCount, was used unchecked — neither tells the caller their input was invalid, and an
-/// unbounded pageSize is a cheap way to force the database to materialize a huge result set. This
-/// makes it an explicit 400 instead.
+/// Shared query-parameter guards for GET endpoints: page/pageSize and date ranges. Without this, an
+/// out-of-range pageSize (zero, negative, or absurdly large) got silently clamped deep in a
+/// repository instead of telling the caller their input was invalid, and an unbounded pageSize is a
+/// cheap way to force the database to materialize a huge result set. This makes it an explicit 400
+/// instead.
 /// </summary>
 public static class QueryValidation
 {
@@ -31,15 +30,6 @@ public static class QueryValidation
             errors["pageSize"] = [$"pageSize must not exceed {maxPageSize}."];
 
         return errors.Count == 0 ? null : controller.ValidationProblem(new ValidationProblemDetails(errors));
-    }
-
-    public static ActionResult? ValidateCount(this ControllerBase controller, string paramName, int value, int min, int max)
-    {
-        if (value >= min && value <= max)
-            return null;
-
-        var errors = new Dictionary<string, string[]> { [paramName] = [$"{paramName} must be between {min} and {max}."] };
-        return controller.ValidationProblem(new ValidationProblemDetails(errors));
     }
 
     public static ActionResult? ValidateDateRange(this ControllerBase controller, DateOnly? fromDate, DateOnly? toDate)

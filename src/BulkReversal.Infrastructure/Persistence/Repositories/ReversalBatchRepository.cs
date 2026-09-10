@@ -73,13 +73,6 @@ public class ReversalBatchRepository : IReversalBatchRepository
         return (items, total);
     }
 
-    public async Task<IReadOnlyList<ReversalBatch>> GetRecentAsync(int count, CancellationToken ct = default) =>
-        await _db.ReversalBatches
-            .AsNoTracking()
-            .OrderByDescending(b => b.UploadedAt)
-            .Take(count)
-            .ToListAsync(ct);
-
     public async Task<DashboardCounts> GetDashboardCountsAsync(CancellationToken ct = default)
     {
         // "Submitted" is a rolling monthly activity count (how many rows were released to the

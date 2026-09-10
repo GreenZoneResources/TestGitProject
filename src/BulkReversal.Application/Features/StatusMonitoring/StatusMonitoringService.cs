@@ -22,10 +22,14 @@ public class StatusMonitoringService : IStatusMonitoringService
         _exportService = exportService;
     }
 
-    public async Task<DashboardDto> GetDashboardAsync(int recentBatchCount = 10, CancellationToken ct = default)
+    public async Task<DashboardDto> GetDashboardAsync(int page = 1, int pageSize = 10, CancellationToken ct = default)
     {
         var counts = await _batchRepository.GetDashboardCountsAsync(ct);
-        var recent = await _batchRepository.GetRecentAsync(recentBatchCount, ct);
+
+        // Reuses the same paginated search every other batch listing goes through (no filters, so
+        // it's every batch, newest first) — a real Prev/Next-capable page instead of a flat top-N.
+        var (recent, totalCount) = await _batchRepository.SearchAsync(
+            batchReferenceContains: null, status: null, fromDate: null, toDate: null, page, pageSize, ct);
 
         var recentDtos = recent
             .Select(b => new RecentBatchDto(b.BatchReference, b.UploadedByName, b.TotalRecords, b.UploadedAt, b.Status))
@@ -33,7 +37,7 @@ public class StatusMonitoringService : IStatusMonitoringService
 
         return new DashboardDto(
             new DashboardCountsDto(counts.Submitted, counts.PendingProcessing, counts.Reversed, counts.RejectedNeedsReview),
-            recentDtos);
+            PagedResult<RecentBatchDto>.Create(recentDtos, page, pageSize, totalCount));
     }
 
     public async Task<PagedResult<TransactionStatusDto>> SearchAsync(StatusFilter filter, CancellationToken ct = default)

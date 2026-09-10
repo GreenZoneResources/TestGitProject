@@ -1,3 +1,4 @@
+using BulkReversal.Application.Common.Models;
 using BulkReversal.Domain.Enums;
 
 namespace BulkReversal.Application.Features.StatusMonitoring.Dtos;
@@ -6,7 +7,7 @@ public record DashboardCountsDto(int Submitted, int PendingProcessing, int Rever
 
 public record RecentBatchDto(string BatchReference, string UploadedByName, int Records, DateTimeOffset UploadedAt, BatchStatus Status);
 
-public record DashboardDto(DashboardCountsDto Counts, IReadOnlyList<RecentBatchDto> RecentBatches);
+public record DashboardDto(DashboardCountsDto Counts, PagedResult<RecentBatchDto> RecentBatches);
 
 public record StatusFilter(
     string? BatchReference,

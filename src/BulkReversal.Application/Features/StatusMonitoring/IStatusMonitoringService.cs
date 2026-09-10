@@ -6,7 +6,7 @@ namespace BulkReversal.Application.Features.StatusMonitoring;
 /// <summary>Backs the Dashboard and Status Monitoring screens (FR-15, FR-16, FR-17).</summary>
 public interface IStatusMonitoringService
 {
-    Task<DashboardDto> GetDashboardAsync(int recentBatchCount = 10, CancellationToken ct = default);
+    Task<DashboardDto> GetDashboardAsync(int page = 1, int pageSize = 10, CancellationToken ct = default);
 
     Task<PagedResult<TransactionStatusDto>> SearchAsync(StatusFilter filter, CancellationToken ct = default);
 

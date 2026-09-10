@@ -21,16 +21,17 @@ public class StatusMonitoringController : ControllerBase
 
     public StatusMonitoringController(IStatusMonitoringService statusService) => _statusService = statusService;
 
-    /// <summary>Dashboard summary cards + recent batches (Dashboard screen).</summary>
+    /// <summary>Dashboard summary cards + a paginated page of recent batches (Dashboard screen).</summary>
     [HttpGet("dashboard")]
     [ProducesResponseType(typeof(DashboardDto), StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<DashboardDto>> Dashboard([FromQuery] int recentBatchCount = 10, CancellationToken ct = default)
+    public async Task<ActionResult<DashboardDto>> Dashboard(
+        [FromQuery] int page = 1, [FromQuery] int pageSize = 10, CancellationToken ct = default)
     {
-        if (this.ValidateCount(nameof(recentBatchCount), recentBatchCount, min: 1, max: 100) is { } invalid)
+        if (this.ValidatePagination(page, pageSize) is { } invalid)
             return invalid;
 
-        var result = await _statusService.GetDashboardAsync(recentBatchCount, ct);
+        var result = await _statusService.GetDashboardAsync(page, pageSize, ct);
         return Ok(result);
     }
 

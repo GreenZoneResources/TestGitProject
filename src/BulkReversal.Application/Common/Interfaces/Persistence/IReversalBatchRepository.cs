@@ -19,8 +19,6 @@ public interface IReversalBatchRepository
         int pageSize,
         CancellationToken ct = default);
 
-    Task<IReadOnlyList<ReversalBatch>> GetRecentAsync(int count, CancellationToken ct = default);
-
     Task<DashboardCounts> GetDashboardCountsAsync(CancellationToken ct = default);
 }
 

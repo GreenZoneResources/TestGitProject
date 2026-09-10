@@ -14,7 +14,9 @@ namespace BulkReversal.Application.Features.Upload.Services;
 /// doesn't have to match the template exactly. Malformed input never throws an unhandled exception —
 /// every failure surfaces as a <see cref="ValidationAppException"/> (400) or, for a per-row value
 /// that can't be parsed, as a normal per-row validation error from the existing field validator
-/// (e.g. an unparsable amount becomes "Transaction Amount must be greater than zero.").
+/// (e.g. an unparsable amount becomes "Transaction Amount must be greater than zero."). Downstream,
+/// <see cref="BatchUploadService.CreateBatchAsync"/> rejects the whole batch if any row fails
+/// validation — a single bad CSV cell fails the entire upload, not just that row.
 /// </summary>
 public static class CsvBatchRequestParser
 {

@@ -7,10 +7,12 @@ namespace BulkReversal.Application.Features.Upload.Validators;
 
 /// <summary>
 /// Guards only against structurally malformed/oversized requests (empty batch, no rows, too many
-/// rows, oversized field values). Per-row business validity (mandatory fields, account format,
-/// duplicates, source-transaction match) is intentionally NOT enforced here — an invalid row is a
-/// normal outcome the row's own validation surfaces (FR-06/FR-07), not an HTTP-level rejection of
-/// the whole batch.
+/// rows, oversized field values) — a fast, cheap rejection before the more expensive per-row
+/// business validity checks (mandatory fields, account format, in-batch duplicates, cross-system
+/// conflicts, source-transaction match) run in
+/// <see cref="BulkReversal.Application.Features.Upload.Services.BatchUploadService.CreateBatchAsync"/>.
+/// Both layers ultimately reject the whole batch (400) on any failure — nothing is ever persisted
+/// unless every row is valid.
 /// </summary>
 public class CreateReversalBatchRequestValidator : AbstractValidator<CreateReversalBatchRequest>
 {

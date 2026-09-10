@@ -59,8 +59,12 @@ public class UploadController : ControllerBase
         return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Reversal-Upload-Template.xlsx");
     }
 
-    /// <summary>FR-03/FR-06/FR-07: validate a batch of transactions submitted as structured JSON.
-    /// The batch stays Validated (editable) until explicitly submitted via <see cref="Submit"/>.</summary>
+    /// <summary>FR-03/FR-06/FR-07: validates a batch of transactions submitted as structured JSON.
+    /// All-or-nothing: if any row fails field-level, in-batch-duplicate (BRU-06), cross-system
+    /// (BRU-04), or source-transaction (BRU-05) validation, the whole request is rejected (400,
+    /// one entry per failing row under <c>errors["transactions[i]"]</c>) and nothing is persisted.
+    /// Only once every row passes is the batch staged (Validated status, editable) until explicitly
+    /// submitted via <see cref="Submit"/>.</summary>
     [HttpPost]
     [RequestSizeLimit(5_000_000)]
     [ProducesResponseType(typeof(UploadBatchResultDto), StatusCodes.Status201Created)]

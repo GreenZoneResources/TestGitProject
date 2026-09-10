@@ -99,6 +99,29 @@ public class BatchUploadServiceTests
     }
 
     [Fact]
+    public async Task CreateBatchAsync_MixOfValidAndInvalidRows_RejectsWholeBatchAndPersistsNothing()
+    {
+        // The core guarantee: a batch is all-or-nothing. A good row sitting next to a bad one must
+        // not sneak into the database just because most of the batch was fine.
+        var badRow = ValidRow("FT0000000002");
+        badRow.AccountNumber = "BADACCT";
+
+        var sut = CreateSut();
+        var request = new CreateReversalBatchRequest
+        {
+            BatchName = "Mixed Batch",
+            Transactions = { ValidRow("FT0000000001"), badRow }
+        };
+
+        var ex = await Assert.ThrowsAsync<ValidationAppException>(() => sut.CreateBatchAsync(request));
+
+        Assert.False(ex.Errors.ContainsKey("transactions[0]")); // the good row has no error of its own...
+        Assert.Contains(ex.Errors["transactions[1]"], e => e.Contains("not a valid 10-digit account number", StringComparison.OrdinalIgnoreCase));
+        _batchRepository.Verify(r => r.Add(It.IsAny<ReversalBatch>()), Times.Never); // ...but neither row was ever persisted.
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task CreateBatchAsync_ExceedingMaxRecordsPerFile_ThrowsValidationAppException()
     {
         _rules = new BusinessRulesOptions { MaxRecordsPerFile = 1, MaxTransactionAgeDays = 365 };
@@ -113,7 +136,7 @@ public class BatchUploadServiceTests
     }
 
     [Fact]
-    public async Task CreateBatchAsync_DuplicateReferenceWithinBatch_MarksBothRowsInvalid()
+    public async Task CreateBatchAsync_DuplicateReferenceWithinBatch_RejectsWholeBatchAndPersistsNothing()
     {
         var sut = CreateSut();
         var request = new CreateReversalBatchRequest
@@ -122,15 +145,16 @@ public class BatchUploadServiceTests
             Transactions = { ValidRow("FT0000000001"), ValidRow("FT0000000001") }
         };
 
-        var result = await sut.CreateBatchAsync(request);
+        var ex = await Assert.ThrowsAsync<ValidationAppException>(() => sut.CreateBatchAsync(request));
 
-        Assert.Equal(0, result.ValidRecords);
-        Assert.Equal(2, result.InvalidRecords);
-        Assert.All(result.InvalidRows, row => Assert.Contains(row.Errors, e => e.Contains("more than once", StringComparison.OrdinalIgnoreCase)));
+        Assert.Contains(ex.Errors["transactions[0]"], e => e.Contains("more than once", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(ex.Errors["transactions[1]"], e => e.Contains("more than once", StringComparison.OrdinalIgnoreCase));
+        _batchRepository.Verify(r => r.Add(It.IsAny<ReversalBatch>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task CreateBatchAsync_ReferenceAlreadyReversed_MarksRowInvalid()
+    public async Task CreateBatchAsync_ReferenceAlreadyReversed_RejectsWholeBatchAndPersistsNothing()
     {
         _transactionRepository
             .Setup(r => r.GetActiveConflictReferencesAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
@@ -139,14 +163,15 @@ public class BatchUploadServiceTests
         var sut = CreateSut();
         var request = new CreateReversalBatchRequest { BatchName = "Already Reversed", Transactions = { ValidRow() } };
 
-        var result = await sut.CreateBatchAsync(request);
+        var ex = await Assert.ThrowsAsync<ValidationAppException>(() => sut.CreateBatchAsync(request));
 
-        Assert.Equal(0, result.ValidRecords);
-        Assert.Contains(result.InvalidRows.Single().Errors, e => e.Contains("already reversed", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(ex.Errors["transactions[0]"], e => e.Contains("already reversed", StringComparison.OrdinalIgnoreCase));
+        _batchRepository.Verify(r => r.Add(It.IsAny<ReversalBatch>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task CreateBatchAsync_ReferenceActiveInAnotherStagedBatch_MarksRowInvalid()
+    public async Task CreateBatchAsync_ReferenceActiveInAnotherStagedBatch_RejectsWholeBatchAndPersistsNothing()
     {
         // BRU-04 must also catch a reference that's merely staged-and-valid in another batch, not
         // just one that has already fully completed reversal.
@@ -157,10 +182,11 @@ public class BatchUploadServiceTests
         var sut = CreateSut();
         var request = new CreateReversalBatchRequest { BatchName = "Active Elsewhere", Transactions = { ValidRow() } };
 
-        var result = await sut.CreateBatchAsync(request);
+        var ex = await Assert.ThrowsAsync<ValidationAppException>(() => sut.CreateBatchAsync(request));
 
-        Assert.Equal(0, result.ValidRecords);
-        Assert.Contains(result.InvalidRows.Single().Errors, e => e.Contains("active in another batch", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(ex.Errors["transactions[0]"], e => e.Contains("active in another batch", StringComparison.OrdinalIgnoreCase));
+        _batchRepository.Verify(r => r.Add(It.IsAny<ReversalBatch>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
@@ -177,7 +203,7 @@ public class BatchUploadServiceTests
     }
 
     [Fact]
-    public async Task CreateBatchAsync_TransferServiceReportsNotFound_MarksRowInvalid()
+    public async Task CreateBatchAsync_TransferServiceReportsNotFound_RejectsWholeBatchAndPersistsNothing()
     {
         _transferOptions = new TransferServiceOptions { Enabled = true, MaxConcurrentRequests = 4 };
         _transferService
@@ -187,14 +213,15 @@ public class BatchUploadServiceTests
         var sut = CreateSut();
         var request = new CreateReversalBatchRequest { BatchName = "Not Found", Transactions = { ValidRow() } };
 
-        var result = await sut.CreateBatchAsync(request);
+        var ex = await Assert.ThrowsAsync<ValidationAppException>(() => sut.CreateBatchAsync(request));
 
-        Assert.Equal(0, result.ValidRecords);
-        Assert.Contains(result.InvalidRows.Single().Errors, e => e.Contains("does not match any source transaction record", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(ex.Errors["transactions[0]"], e => e.Contains("does not match any source transaction record", StringComparison.OrdinalIgnoreCase));
+        _batchRepository.Verify(r => r.Add(It.IsAny<ReversalBatch>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task CreateBatchAsync_TransferServiceUnavailable_MarksRowInvalidWithRetryHint()
+    public async Task CreateBatchAsync_TransferServiceUnavailable_RejectsWholeBatchWithRetryHint()
     {
         _transferOptions = new TransferServiceOptions { Enabled = true, MaxConcurrentRequests = 4 };
         _transferService
@@ -204,14 +231,15 @@ public class BatchUploadServiceTests
         var sut = CreateSut();
         var request = new CreateReversalBatchRequest { BatchName = "Unavailable", Transactions = { ValidRow() } };
 
-        var result = await sut.CreateBatchAsync(request);
+        var ex = await Assert.ThrowsAsync<ValidationAppException>(() => sut.CreateBatchAsync(request));
 
-        Assert.Equal(0, result.ValidRecords);
-        Assert.Contains(result.InvalidRows.Single().Errors, e => e.Contains("Unable to verify", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(ex.Errors["transactions[0]"], e => e.Contains("Unable to verify", StringComparison.OrdinalIgnoreCase));
+        _batchRepository.Verify(r => r.Add(It.IsAny<ReversalBatch>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
-    public async Task CreateBatchAsync_TransferServiceFoundWithMismatchedAccount_MarksRowInvalid()
+    public async Task CreateBatchAsync_TransferServiceFoundWithMismatchedAccount_RejectsWholeBatchAndPersistsNothing()
     {
         _transferOptions = new TransferServiceOptions { Enabled = true, MaxConcurrentRequests = 4 };
         _transferService
@@ -221,10 +249,11 @@ public class BatchUploadServiceTests
         var sut = CreateSut();
         var request = new CreateReversalBatchRequest { BatchName = "Mismatch", Transactions = { ValidRow() } };
 
-        var result = await sut.CreateBatchAsync(request);
+        var ex = await Assert.ThrowsAsync<ValidationAppException>(() => sut.CreateBatchAsync(request));
 
-        Assert.Equal(0, result.ValidRecords);
-        Assert.Contains(result.InvalidRows.Single().Errors, e => e.Contains("does not match the source transaction record", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(ex.Errors["transactions[0]"], e => e.Contains("does not match the source transaction record", StringComparison.OrdinalIgnoreCase));
+        _batchRepository.Verify(r => r.Add(It.IsAny<ReversalBatch>()), Times.Never);
+        _unitOfWork.Verify(u => u.SaveChangesAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

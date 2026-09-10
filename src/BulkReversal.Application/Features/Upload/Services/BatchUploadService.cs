@@ -79,9 +79,6 @@ public class BatchUploadService : IBatchUploadService
         if (request.Transactions.Count > _rules.MaxRecordsPerFile) // BRU-01
             throw new ValidationAppException(nameof(request.Transactions), $"{request.Transactions.Count} records were submitted, exceeding the maximum of {_rules.MaxRecordsPerFile} records per batch.");
 
-        var batchReference = await _referenceGenerator.NextAsync(ct);
-        var batch = ReversalBatch.Create(request.BatchName, _currentUser.UserId, _currentUser.UserName, batchReference);
-
         // BRU-06: duplicate references within the same submission.
         var duplicateRefsInBatch = request.Transactions
             .Where(t => !string.IsNullOrWhiteSpace(t.SessionIdOrFtReference))
@@ -102,6 +99,11 @@ public class BatchUploadService : IBatchUploadService
         // open hundreds of simultaneous connections to the Transfer Service.
         var sourceCheckErrors = await CheckSourceTransactionsAsync(request.Transactions, ct);
 
+        // Validate every row up front, before anything touches the database. A single invalid or
+        // duplicate row rejects the whole batch (400) — nothing is persisted unless every row
+        // passes. The caller fixes their source data and resubmits the entire batch; there is no
+        // partially-valid batch left staged in the database to correct row-by-row.
+        var rowErrors = new Dictionary<string, string[]>();
         for (var i = 0; i < request.Transactions.Count; i++)
         {
             var row = request.Transactions[i];
@@ -116,6 +118,22 @@ public class BatchUploadService : IBatchUploadService
                 if (conflictingRefs.Contains(row.SessionIdOrFtReference))
                     errors.Add($"Session ID / FT Reference '{row.SessionIdOrFtReference}' is already reversed or already active in another batch.");
             }
+
+            if (errors.Count > 0)
+                rowErrors[$"transactions[{i}]"] = errors.ToArray();
+        }
+
+        if (rowErrors.Count > 0)
+            throw new ValidationAppException(rowErrors);
+
+        // Every row passed — safe to persist. Every row is Valid by construction; an invalid row
+        // never reaches storage.
+        var batchReference = await _referenceGenerator.NextAsync(ct);
+        var batch = ReversalBatch.Create(request.BatchName, _currentUser.UserId, _currentUser.UserName, batchReference);
+
+        for (var i = 0; i < request.Transactions.Count; i++)
+        {
+            var row = request.Transactions[i];
 
             var transaction = ReversalTransaction.Create(
                 batch.Id,
@@ -132,13 +150,9 @@ public class BatchUploadService : IBatchUploadService
                 row.Biller,
                 row.ReasonForFailure ?? string.Empty,
                 row.Comments,
-                _currentUser.UserId);
+                _currentUser.Email ?? _currentUser.UserId);
 
-            if (errors.Count == 0)
-                transaction.MarkValid();
-            else
-                transaction.MarkInvalid(errors);
-
+            transaction.MarkValid();
             batch.AddTransaction(transaction);
         }
 
@@ -150,20 +164,20 @@ public class BatchUploadService : IBatchUploadService
             nameof(ReversalBatch),
             batch.Id.ToString(),
             batch.BatchReference,
-            $"Batch {batch.BatchReference} created with {batch.TotalRecords} records ({batch.ValidRecords} valid, {batch.InvalidRecords} invalid).");
+            $"Batch {batch.BatchReference} created with {batch.TotalRecords} records (all valid).");
 
         _auditService.Record(
             AuditAction.Validation,
             nameof(ReversalBatch),
             batch.Id.ToString(),
             batch.BatchReference,
-            $"Validation complete for {batch.BatchReference}: {batch.ValidRecords} valid, {batch.InvalidRecords} invalid.");
+            $"Validation complete for {batch.BatchReference}: {batch.ValidRecords} valid, 0 invalid.");
 
         await _unitOfWork.SaveChangesAsync(ct);
 
         _logger.LogInformation(
-            "Batch {BatchReference} created by {UserId}: {Total} records, {Valid} valid, {Invalid} invalid.",
-            batch.BatchReference, _currentUser.UserId, batch.TotalRecords, batch.ValidRecords, batch.InvalidRecords);
+            "Batch {BatchReference} created by {UserId}: {Total} records, all valid.",
+            batch.BatchReference, _currentUser.Email ?? _currentUser.UserId, batch.TotalRecords);
 
         return MapToResultDto(batch);
     }
